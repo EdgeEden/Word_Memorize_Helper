@@ -17,11 +17,17 @@ class DeepSeekService {
     required String apiKey,
     String? baseUrl,
   }) async {
+    final cleanInput = userInput.trim();
+    if (cleanInput.isEmpty) {
+      return false;
+    }
+
     final cleanKey = apiKey.trim();
     if (cleanKey.isEmpty) {
-      debugPrint('DeepSeekService: API Key is empty.');
+      debugPrint('[DeepSeek API] 未配置 API Key，跳过 AI 判定。');
       return null;
     }
+
 
     final rawBase = (baseUrl != null && baseUrl.trim().isNotEmpty)
         ? baseUrl.trim()
@@ -31,7 +37,7 @@ class DeepSeekService {
         : rawBase;
 
     final prompt =
-        "判断'${userInput.trim()}'是否与'${word.trim()}'意思相同，只能回答单个汉字'是'或'否'，不要任何解释、标点或额外内容。";
+        "判断'${userInput.trim()}'是否属于'${word.trim()}'的中文释义，或与'${word.trim()}'含义相似。只能回答单个汉字'是'或'否'，不要任何解释、标点或额外内容。";
 
     final endpoint = '$cleanBase/chat/completions';
 
@@ -53,7 +59,7 @@ class DeepSeekService {
               'max_tokens': 10,
             }),
           )
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data =
@@ -63,15 +69,37 @@ class DeepSeekService {
           final first = choices.first as Map<String, dynamic>;
           final message = first['message'] as Map<String, dynamic>?;
           final content = message?['content']?.toString().trim() ?? '';
-          return parseAiResponse(content);
+          final result = parseAiResponse(content);
+          if (result == null) {
+            debugPrint('[DeepSeek API Warning] AI 返回了非预期内容: "$content" (无法解析为 是/否)');
+          }
+          return result;
+        } else {
+          debugPrint('[DeepSeek API Error] 响应体 choices 为空: ${response.body}');
         }
       } else {
+        String errorDetail;
+        try {
+          errorDetail = utf8.decode(response.bodyBytes);
+        } catch (_) {
+          errorDetail = response.body;
+        }
         debugPrint(
-            'DeepSeek API error: HTTP ${response.statusCode} - ${response.body}');
+          '❌ [DeepSeek API HTTP 错误]\n'
+          '  端点: $endpoint\n'
+          '  状态码: ${response.statusCode}\n'
+          '  响应详情: $errorDetail',
+        );
       }
       return null;
-    } catch (e) {
-      debugPrint('DeepSeekService evaluateAnswer exception: $e');
+    } catch (e, stackTrace) {
+      debugPrint(
+        '❌ [DeepSeek API 请求异常]\n'
+        '  端点: $endpoint\n'
+        '  异常类型: ${e.runtimeType}\n'
+        '  错误描述: $e\n'
+        '  堆栈追踪: $stackTrace',
+      );
       return null;
     }
   }
@@ -126,23 +154,26 @@ class DeepSeekService {
               'max_tokens': 5,
             }),
           )
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         return (success: true, message: 'DeepSeek API 验证成功，服务正常！');
       } else if (response.statusCode == 401) {
-        return (success: false, message: 'API Key 无效或未授权 (401)');
+        final err = 'API Key 无效或未授权 (401)';
+        debugPrint('[DeepSeek Connection Test] $err\n响应: ${response.body}');
+        return (success: false, message: err);
       } else if (response.statusCode == 402) {
-        return (success: false, message: '账户余额不足 (402)');
+        final err = '账户余额不足 (402)';
+        debugPrint('[DeepSeek Connection Test] $err\n响应: ${response.body}');
+        return (success: false, message: err);
       } else {
-        return (
-          success: false,
-          message: '连接失败: HTTP ${response.statusCode}'
-        );
+        final err = '连接失败: HTTP ${response.statusCode}';
+        debugPrint('[DeepSeek Connection Test] $err\n响应: ${response.body}');
+        return (success: false, message: err);
       }
     } catch (e) {
+      debugPrint('❌ [DeepSeek Connection Test 异常] $e');
       return (success: false, message: '网络连接超时或错误: $e');
     }
   }
 }
-

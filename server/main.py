@@ -72,8 +72,8 @@ def sync_cards(payload: SyncRequest):
     }
 
 if __name__ == "__main__":
-    # Host on 0.0.0.0 port 8000 for LAN, Web, Android & Windows accessibility
-    port = int(os.environ.get("PORT", 8000))
+    # Host on 0.0.0.0 port 25642 for LAN, Web, Android & Windows accessibility
+    port = int(os.environ.get("PORT", 25642))
     print(f"Starting WordN Server on http://0.0.0.0:{port}...")
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
 

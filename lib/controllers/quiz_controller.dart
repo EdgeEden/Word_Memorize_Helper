@@ -329,8 +329,10 @@ class QuizController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Submit answer, evaluate correctness (via DeepSeek AI or Local Matcher),
-  /// update FSRS memory state, and schedule next review
+  /// Submit answer, evaluate correctness:
+  /// 1. Always perform fast local dictionary match first.
+  /// 2. If local match fails and user selected AI mode, invoke DeepSeek API for semantic evaluation.
+  /// 3. Update FSRS memory state, and schedule next review.
   Future<void> submitAnswer(String input) async {
     if (_isSubmitted || _isEvaluating || _currentWord == null) return;
 
@@ -339,40 +341,54 @@ class QuizController extends ChangeNotifier {
 
     bool isAnswerCorrect;
 
-    // AI Semantic Evaluation Mode
-    if (_evalMode == EvaluationMode.deepseekAi) {
-      if (_deepseekApiKey.trim().isEmpty) {
-        // Fallback to local rule matcher if no API key is provided
-        isAnswerCorrect = _currentWord!.checkAnswer(_lastUserInput);
-        _evaluationNotice = '未配置 DeepSeek API Key，已自动使用本地词典匹配';
-      } else {
-        _isEvaluating = true;
-        notifyListeners();
-
-        final aiResult = await DeepSeekService.evaluateAnswer(
-          word: _currentWord!.word,
-          userInput: _lastUserInput,
-          apiKey: _deepseekApiKey,
-          baseUrl: _deepseekBaseUrl,
-        );
-
-        _isEvaluating = false;
-
-        if (aiResult != null) {
-          isAnswerCorrect = aiResult;
-        } else {
-          // AI connection error or timeout, gracefully fallback to local matcher
-          isAnswerCorrect = _currentWord!.checkAnswer(_lastUserInput);
-          _evaluationNotice = 'DeepSeek 连接异常，已自动回退为本地词典匹配';
-        }
-      }
+    // Fast-path: Empty input is directly incorrect without querying AI
+    if (_lastUserInput.isEmpty) {
+      isAnswerCorrect = false;
     } else {
-      // Standard local keyword matcher
-      isAnswerCorrect = _currentWord!.checkAnswer(_lastUserInput);
+      // Step 1: Always perform local dictionary matching first
+      final bool localMatched = _currentWord!.checkAnswer(_lastUserInput);
+
+      if (localMatched) {
+        // Local dictionary matched directly -> instant success, no AI call needed
+        isAnswerCorrect = true;
+      } else if (_evalMode == EvaluationMode.deepseekAi) {
+        // Step 2: Local match failed and user selected AI mode -> evaluate via DeepSeek API
+        if (_deepseekApiKey.trim().isEmpty) {
+          isAnswerCorrect = false;
+          _evaluationNotice = '本地匹配未通过，且未配置 DeepSeek API Key';
+        } else {
+          _isEvaluating = true;
+          notifyListeners();
+
+          final aiResult = await DeepSeekService.evaluateAnswer(
+            word: _currentWord!.word,
+            userInput: _lastUserInput,
+            apiKey: _deepseekApiKey,
+            baseUrl: _deepseekBaseUrl,
+          );
+
+          _isEvaluating = false;
+
+          if (aiResult != null) {
+            isAnswerCorrect = aiResult;
+            if (aiResult) {
+              _evaluationNotice = '本地匹配未通过，已由 DeepSeek AI 语义判定为正确';
+            }
+          } else {
+            isAnswerCorrect = false;
+            _evaluationNotice = '本地匹配未通过，且 DeepSeek 网络连接异常';
+            debugPrint('[QuizController] DeepSeek AI 判定请求未成功返回结果，单词: "${_currentWord!.word}", 输入: "$_lastUserInput"');
+          }
+        }
+      } else {
+        // Local matcher mode and local match failed
+        isAnswerCorrect = false;
+      }
     }
 
     _isSubmitted = true;
     _isCorrect = isAnswerCorrect;
+
 
     _totalAnswered++;
     _sessionStepCounter++;

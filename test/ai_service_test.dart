@@ -61,18 +61,46 @@ void main() {
       expect(freshController.deepseekBaseUrl, 'https://custom.deepseek.com');
     });
 
-    test('Gracefully falls back to local matcher when API key is empty in AI mode', () async {
+    test('Directly succeeds on local match first even in AI mode', () async {
       final controller = QuizController();
       await controller.init();
       await controller.setEvalMode(EvaluationMode.deepseekAi);
 
       if (controller.currentWord != null) {
-        // Submit answer with empty key
+        // Submit exactly matching answer
         await controller.submitAnswer(controller.currentWord!.definition);
         expect(controller.isSubmitted, isTrue);
         expect(controller.isCorrect, isTrue);
+        expect(controller.evaluationNotice, isNull);
+      }
+    });
+
+    test('In AI mode with local mismatch and empty key, reports failure with notice', () async {
+      final controller = QuizController();
+      await controller.init();
+      await controller.setEvalMode(EvaluationMode.deepseekAi);
+
+      if (controller.currentWord != null) {
+        // Submit non-matching gibberish answer
+        await controller.submitAnswer('完全不相干的文字xyz');
+        expect(controller.isSubmitted, isTrue);
+        expect(controller.isCorrect, isFalse);
         expect(controller.evaluationNotice, contains('未配置 DeepSeek API Key'));
+      }
+    });
+    test('Directly marks empty answer as incorrect without invoking AI or setting notices', () async {
+      final controller = QuizController();
+      await controller.init();
+      await controller.setEvalMode(EvaluationMode.deepseekAi);
+
+      if (controller.currentWord != null) {
+        await controller.submitAnswer('   ');
+        expect(controller.isSubmitted, isTrue);
+        expect(controller.isCorrect, isFalse);
+        expect(controller.isEvaluating, isFalse);
+        expect(controller.evaluationNotice, isNull);
       }
     });
   });
 }
+

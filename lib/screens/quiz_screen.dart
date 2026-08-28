@@ -608,8 +608,8 @@ class _QuizScreenState extends State<QuizScreen> {
           TextField(
             controller: _textController,
             focusNode: _focusNode,
-            readOnly: _controller.isSubmitted,
-            canRequestFocus: !_controller.isSubmitted,
+            readOnly: _controller.isSubmitted || _controller.isEvaluating,
+            canRequestFocus: !_controller.isSubmitted && !_controller.isEvaluating,
             textAlign: TextAlign.center,
             textInputAction: TextInputAction.done,
             style: TextStyle(
@@ -618,21 +618,17 @@ class _QuizScreenState extends State<QuizScreen> {
               color: colorScheme.onSurface,
             ),
             decoration: InputDecoration(
-              hintText: _controller.isEvaluating
-                  ? '🤖 DeepSeek 正在智能判定释义...'
-                  : (_controller.isSubmitted ? '已提交答案' : '输入中文释义（按回车提交）...'),
+              hintText: _controller.isSubmitted ? '已提交答案' : '输入中文释义（按回车提交）...',
               hintStyle: TextStyle(
                 fontSize: 15,
-                color: _controller.isEvaluating
-                    ? colorScheme.primary
-                    : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                fontWeight: _controller.isEvaluating ? FontWeight.w600 : FontWeight.normal,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
               ),
               filled: true,
               fillColor: _controller.isSubmitted
                   ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.25)
                   : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
               contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+
 
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -655,6 +651,49 @@ class _QuizScreenState extends State<QuizScreen> {
             ),
             onSubmitted: (_) => _submitAnswer(),
           ),
+
+          // 3.1 AI Evaluating Status Banner (Visible while user input is being verified by DeepSeek)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+            child: _controller.isEvaluating
+                ? Container(
+                    margin: const EdgeInsets.only(top: 14),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: colorScheme.primary.withValues(alpha: 0.3),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'DeepSeek 正在智能判定释义...',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+
 
           // 4. Revealed Definition & Examples when submitted (Smooth animated expand)
           AnimatedSize(
@@ -954,13 +993,7 @@ class _QuizScreenState extends State<QuizScreen> {
                         elevation: 1,
                       ),
                       onPressed: _controller.isEvaluating ? null : _submitAnswer,
-                      icon: _controller.isEvaluating
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.check_rounded, size: 20),
+                      icon: const Icon(Icons.check_rounded, size: 20),
                       label: Text(
                         _controller.isEvaluating ? 'AI 判定中...' : '答案提交',
                         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
@@ -968,6 +1001,7 @@ class _QuizScreenState extends State<QuizScreen> {
                     ),
                   ),
                 ),
+
 
               ],
             ),
