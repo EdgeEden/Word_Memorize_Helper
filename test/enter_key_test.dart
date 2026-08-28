@@ -41,5 +41,32 @@ void main() {
       expect(find.text('下一个 (Enter)'), findsNothing);
     }
   });
+
+  testWidgets('Clicking or tapping "下一个 (Enter)" button advances to next word',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const WordNApp());
+    for (int i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    if (find.byType(TextField).evaluate().isNotEmpty) {
+      // 1. Submit answer via tapping the submit button on UI
+      await tester.enterText(find.byType(TextField), '段落');
+      await tester.tap(find.text('答案提交'));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Verify "下一个 (Enter)" button is visible
+      expect(find.text('下一个 (Enter)'), findsOneWidget);
+
+      // 2. Tap "下一个 (Enter)" button directly with mouse/touchscreen
+      await tester.tap(find.text('下一个 (Enter)'));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Verify that we advance to next word
+      expect(find.text('答案提交'), findsOneWidget);
+      expect(find.text('下一个 (Enter)'), findsNothing);
+    }
+  });
 }
+
 

@@ -30,13 +30,11 @@ class _QuizScreenState extends State<QuizScreen> {
   late final FocusNode _focusNode;
   late final FocusNode _nextButtonFocusNode;
 
-  DateTime? _lastSubmitTime;
   bool _ignoreEnterUntilKeyUp = false;
-  static const int _minReviewDelayMs = 300;
 
   @override
+
   void initState() {
-    super.initState();
     _controller = QuizController();
     _textController = TextEditingController();
     _focusNode = FocusNode();
@@ -114,8 +112,8 @@ class _QuizScreenState extends State<QuizScreen> {
         return true; // Ignore Enter during AI evaluation
       }
 
-      if (_controller.isSubmitted) {
-        _goToNextWord();
+      if (_ignoreEnterUntilKeyUp) {
+        return true; // Ignore key repeat or hold-down from initial submission
         return true;
       } else {
         _submitAnswer();
@@ -128,25 +126,17 @@ class _QuizScreenState extends State<QuizScreen> {
   /// Explicitly submit answer (from input field or submit button)
   void _submitAnswer() {
     if (_controller.isSubmitted || _controller.isEvaluating) return;
-    _lastSubmitTime = DateTime.now();
     _ignoreEnterUntilKeyUp = true;
     _focusNode.unfocus();
     _controller.submitAnswer(_textController.text);
   }
 
 
+
   /// Explicitly advance to next word (from next button or enter key when answer is displayed)
   void _goToNextWord() {
-    if (!_controller.isSubmitted) return;
-    if (_ignoreEnterUntilKeyUp) return;
 
-    if (_lastSubmitTime != null) {
-      final elapsed = DateTime.now().difference(_lastSubmitTime!).inMilliseconds;
-      if (elapsed < _minReviewDelayMs) {
-        return;
-      }
-    }
-
+    _ignoreEnterUntilKeyUp = false;
     _textController.clear();
     _controller.nextWord();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -167,7 +157,6 @@ class _QuizScreenState extends State<QuizScreen> {
   }
 
   Widget _buildSyncIcon(SyncStatus status) {
-    switch (status) {
       case SyncStatus.synced:
         return const Icon(Icons.cloud_done_rounded, color: Colors.green, size: 22);
       case SyncStatus.syncing:
@@ -204,21 +193,22 @@ class _QuizScreenState extends State<QuizScreen> {
     return Scaffold(
         backgroundColor: colorScheme.surface,
         appBar: AppBar(
+          titleSpacing: 12,
           title: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.all(6),
+                padding: const EdgeInsets.all(5),
                 decoration: BoxDecoration(
                   color: colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(Icons.menu_book_rounded, color: colorScheme.primary, size: 20),
+                child: Icon(Icons.menu_book_rounded, color: colorScheme.primary, size: 18),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               const Text(
-                'WordN 考研记单词',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
+                'WordN',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
               ),
             ],
           ),
@@ -229,33 +219,40 @@ class _QuizScreenState extends State<QuizScreen> {
             // User Account Chip
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: ActionChip(
-                avatar: CircleAvatar(
-                  backgroundColor: colorScheme.primaryContainer,
-                  radius: 12,
-                  child: Icon(Icons.person, size: 14, color: colorScheme.primary),
-                ),
-                label: Text(
-                  _controller.currentUsername ?? '点击登录',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: _controller.isLoggedIn ? colorScheme.onSurface : colorScheme.primary,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 100),
+                child: ActionChip(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  avatar: CircleAvatar(
+                    backgroundColor: colorScheme.primaryContainer,
+                    radius: 10,
+                    child: Icon(Icons.person, size: 12, color: colorScheme.primary),
                   ),
+                  label: Text(
+                    _controller.currentUsername ?? '登录',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _controller.isLoggedIn ? colorScheme.onSurface : colorScheme.primary,
+                    ),
+                  ),
+                  onPressed: () {
+                    if (_controller.isLoggedIn) {
+                      AccountInfoDialog.show(context, _controller);
+                    } else {
+                      LoginDialog.show(context, _controller);
+                    }
+                  },
                 ),
-                onPressed: () {
-                  if (_controller.isLoggedIn) {
-                    AccountInfoDialog.show(context, _controller);
-                  } else {
-                    LoginDialog.show(context, _controller);
-                  }
-                },
               ),
             ),
-            const SizedBox(width: 4),
 
             // Cloud sync status button
             IconButton(
+              visualDensity: VisualDensity.compact,
               tooltip: _getSyncTooltip(_controller.syncStatus),
               icon: _buildSyncIcon(_controller.syncStatus),
               onPressed: () {
@@ -269,6 +266,7 @@ class _QuizScreenState extends State<QuizScreen> {
 
             // FSRS Memory & Wrong Words notebook button
             IconButton(
+              visualDensity: VisualDensity.compact,
               tooltip: 'FSRS 错题与记忆库',
               icon: Badge(
                 isLabelVisible: _controller.dueReviewCount > 0 || _controller.criticalCount > 0,
@@ -285,6 +283,7 @@ class _QuizScreenState extends State<QuizScreen> {
 
             // Unified Settings (Appearance theme & Answer evaluation method)
             IconButton(
+              visualDensity: VisualDensity.compact,
               tooltip: '偏好设置',
               icon: const Icon(Icons.settings_outlined),
               onPressed: () {
@@ -298,7 +297,7 @@ class _QuizScreenState extends State<QuizScreen> {
                 );
               },
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
           ],
         ),
 
@@ -338,7 +337,7 @@ class _QuizScreenState extends State<QuizScreen> {
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 680),
                         child: SingleChildScrollView(
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
@@ -367,85 +366,99 @@ class _QuizScreenState extends State<QuizScreen> {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          // Mode chip
-          InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: _controller.totalTrackedCardsCount > 0
-                ? _controller.toggleWrongReviewMode
-                : null,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _controller.isWrongReviewMode
-                    ? Colors.orange.withValues(alpha: 0.15)
-                    : colorScheme.primaryContainer.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(20),
-              ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
               child: Row(
-                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Icon(
-                    _controller.isWrongReviewMode ? Icons.replay_rounded : Icons.shuffle_rounded,
-                    size: 14,
-                    color: _controller.isWrongReviewMode ? Colors.orange[800] : colorScheme.primary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    _controller.isWrongReviewMode ? '错题专练' : '考研词库 (4533)',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: _controller.isWrongReviewMode ? Colors.orange[800] : colorScheme.primary,
+                  // Mode chip (Pinned to left)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: _controller.totalTrackedCardsCount > 0
+                        ? _controller.toggleWrongReviewMode
+                        : null,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _controller.isWrongReviewMode
+                            ? Colors.orange.withValues(alpha: 0.15)
+                            : colorScheme.primaryContainer.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _controller.isWrongReviewMode ? Icons.replay_rounded : Icons.shuffle_rounded,
+                            size: 13,
+                            color: _controller.isWrongReviewMode ? Colors.orange[800] : colorScheme.primary,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _controller.isWrongReviewMode ? '错题专练' : '考研 4533',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _controller.isWrongReviewMode ? Colors.orange[800] : colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                  ),
+
+                  // Stats (Pinned to right): total, due, accuracy, streak
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_controller.dueReviewCount > 0) ...[
+                        _buildStatItem(
+                          icon: Icons.alarm_rounded,
+                          label: '待复习 ${_controller.dueReviewCount}',
+                          color: Colors.amber[800]!,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      _buildStatItem(
+                        icon: Icons.check_circle_outline_rounded,
+                        label: '已背 ${_controller.totalAnswered}',
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 8),
+                      _buildStatItem(
+                        icon: Icons.analytics_outlined,
+                        label: '${_controller.accuracy.toStringAsFixed(0)}%',
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 8),
+                      _buildStatItem(
+                        icon: Icons.local_fire_department_rounded,
+                        label: '${_controller.streak}',
+                        color: _controller.streak > 0 ? Colors.deepOrange : colorScheme.onSurfaceVariant,
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
-          ),
-
-          // Stats: total, due, accuracy, streak
-          Row(
-            children: [
-              if (_controller.dueReviewCount > 0) ...[
-                _buildStatItem(
-                  icon: Icons.alarm_rounded,
-                  label: '待复习 ${_controller.dueReviewCount}',
-                  color: Colors.amber[800]!,
-                ),
-                const SizedBox(width: 10),
-              ],
-              _buildStatItem(
-                icon: Icons.check_circle_outline_rounded,
-                label: '已背 ${_controller.totalAnswered}',
-                color: colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 10),
-              _buildStatItem(
-                icon: Icons.analytics_outlined,
-                label: '${_controller.accuracy.toStringAsFixed(0)}%',
-                color: colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 10),
-              _buildStatItem(
-                icon: Icons.local_fire_department_rounded,
-                label: '${_controller.streak}',
-                color: _controller.streak > 0 ? Colors.deepOrange : colorScheme.onSurfaceVariant,
-              ),
-            ],
-          ),
-        ],
+          );
+        },
       ),
     );
   }
+
+
 
   Widget _buildStatItem({
     required IconData icon,
