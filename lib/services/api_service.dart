@@ -6,12 +6,8 @@ import '../models/fsrs/fsrs_models.dart';
 
 class ApiService {
   static const String _defaultLocalhost = 'http://127.0.0.1:8000';
-  static const String _defaultAndroidEmulator = 'http://10.0.2.2:8000';
 
   static String getDefaultServerUrl() {
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      return _defaultAndroidEmulator;
-    }
     return _defaultLocalhost;
   }
 
@@ -19,7 +15,7 @@ class ApiService {
   static Future<bool> checkHealth(String serverUrl) async {
     try {
       final uri = Uri.parse('$serverUrl/api/health');
-      final response = await http.get(uri).timeout(const Duration(seconds: 3));
+      final response = await http.get(uri).timeout(const Duration(seconds: 2));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return data['status'] == 'ok';
@@ -43,7 +39,7 @@ class ApiService {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'username': username.trim().toLowerCase()}),
           )
-          .timeout(const Duration(seconds: 6));
+          .timeout(const Duration(seconds: 2));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -77,7 +73,7 @@ class ApiService {
   }) async {
     try {
       final uri = Uri.parse('$serverUrl/api/cards?username=${Uri.encodeComponent(username.trim().toLowerCase())}');
-      final response = await http.get(uri).timeout(const Duration(seconds: 6));
+      final response = await http.get(uri).timeout(const Duration(seconds: 2));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -121,7 +117,7 @@ class ApiService {
               'cards': payloadCards,
             }),
           )
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 2));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../controllers/quiz_controller.dart';
+import '../services/fsrs_repository.dart';
 
 /// Modern Material 3 Login & User Registration Dialog
 class LoginDialog extends StatefulWidget {
@@ -34,19 +35,40 @@ class LoginDialog extends StatefulWidget {
 class _LoginDialogState extends State<LoginDialog> {
   late final TextEditingController _usernameController;
   late final TextEditingController _serverController;
+  List<String> _userHistory = [];
   bool _showServerConfig = false;
   bool _isSubmitting = false;
   String? _errorMessage;
 
+  late final FocusNode _usernameFocusNode;
+
   @override
   void initState() {
     super.initState();
+    _usernameFocusNode = FocusNode();
     _usernameController = TextEditingController(text: widget.controller.currentUsername ?? '');
     _serverController = TextEditingController(text: widget.controller.serverUrl);
+    _loadUserHistory();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _usernameFocusNode.requestFocus();
+      }
+    });
+  }
+
+  Future<void> _loadUserHistory() async {
+    final list = await FsrsRepository.getUserHistory();
+    if (mounted) {
+      setState(() {
+        _userHistory = list;
+      });
+    }
   }
 
   @override
   void dispose() {
+    _usernameFocusNode.dispose();
     _usernameController.dispose();
     _serverController.dispose();
     super.dispose();
@@ -121,81 +143,124 @@ class _LoginDialogState extends State<LoginDialog> {
             ),
           ],
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                widget.isSwitchAccount
-                    ? '请输入要切换的用户名。错题本与 FSRS 记忆状态将与该账户独立绑定。'
-                    : '请输入唯一用户名进行登录/注册。错题本与复习进度将实时同步至 Python 云端后端。',
-                style: TextStyle(fontSize: 13, height: 1.4, color: colorScheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 20),
-
-              // Username input field
-              TextField(
-                controller: _usernameController,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: '用户名称 (Username)',
-                  hintText: '如: alex, study_2026',
-                  prefixIcon: const Icon(Icons.person_outline_rounded),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                  errorText: _errorMessage,
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.isSwitchAccount
+                      ? '请输入要切换的用户名。错题本与 FSRS 记忆状态将与该账户独立绑定。'
+                      : '请输入唯一用户名进行登录/注册。错题本与复习进度将实时同步至 Python 云端后端。',
+                  style: TextStyle(fontSize: 13, height: 1.4, color: colorScheme.onSurfaceVariant),
                 ),
-                onSubmitted: (_) => _handleLogin(),
-              ),
+                const SizedBox(height: 20),
 
-              const SizedBox(height: 12),
+                // Username input field
+                TextField(
+                  controller: _usernameController,
+                  focusNode: _usernameFocusNode,
+                  decoration: InputDecoration(
+                    labelText: '用户名称 (Username)',
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
+                    hintText: '如: alex, study_2026',
+                    prefixIcon: const Icon(Icons.person_outline_rounded),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    errorText: _errorMessage,
+                  ),
+                  onSubmitted: (_) => _handleLogin(),
+                ),
 
-              // Toggle Server Configuration
-              InkWell(
-                borderRadius: BorderRadius.circular(8),
-                onTap: () {
-                  setState(() {
-                    _showServerConfig = !_showServerConfig;
-                  });
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _showServerConfig ? Icons.arrow_drop_up_rounded : Icons.arrow_drop_down_rounded,
-                        size: 20,
-                        color: colorScheme.primary,
-                      ),
-                      Text(
-                        _showServerConfig ? '隐藏服务器配置' : '高级：配置后端服务器地址',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                if (_userHistory.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    '已保存的历史登录账户:',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: _userHistory.map((u) {
+                      final isCurrent = u.toLowerCase() == _usernameController.text.toLowerCase();
+                      return ActionChip(
+                        avatar: Icon(
+                          Icons.person,
+                          size: 14,
+                          color: isCurrent ? colorScheme.primary : null,
+                        ),
+                        label: Text(
+                          u,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                        onPressed: () {
+                          _usernameController.text = u;
+                          _handleLogin();
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ],
+
+                const SizedBox(height: 12),
+
+                // Toggle Server Configuration
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () {
+                    setState(() {
+                      _showServerConfig = !_showServerConfig;
+                    });
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _showServerConfig ? Icons.arrow_drop_up_rounded : Icons.arrow_drop_down_rounded,
+                          size: 20,
                           color: colorScheme.primary,
                         ),
-                      ),
-                    ],
+                        Text(
+                          _showServerConfig ? '隐藏服务器配置' : '高级：配置后端服务器地址',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
 
-              if (_showServerConfig) ...[
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _serverController,
-                  decoration: InputDecoration(
-                    labelText: '后端 API 地址',
-                    hintText: 'http://127.0.0.1:8000',
-                    prefixIcon: const Icon(Icons.dns_outlined, size: 20),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                    helperText: 'Windows/Web 默认 127.0.0.1:8000，Android 模拟器 10.0.2.2:8000',
-                    helperMaxLines: 2,
+                if (_showServerConfig) ...[
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _serverController,
+                    decoration: InputDecoration(
+                      labelText: '后端 API 地址',
+                      floatingLabelBehavior: FloatingLabelBehavior.always,
+                      hintText: 'http://127.0.0.1:8000',
+                      prefixIcon: const Icon(Icons.dns_outlined, size: 20),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                      helperText: 'Windows/Web 默认 127.0.0.1:8000，Android 模拟器 10.0.2.2:8000',
+                      helperMaxLines: 2,
+                    ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
         actions: [
@@ -324,107 +389,110 @@ class _AccountInfoDialogState extends State<AccountInfoDialog> {
           ),
         ],
       ),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Statistics Summary
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Statistics Summary
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildStatItem('已追踪词条', '${controller.totalTrackedCardsCount}'),
+                    _buildStatItem('待复习', '${controller.dueReviewCount}', color: Colors.orange),
+                    _buildStatItem('高危顽固', '${controller.criticalCount}', color: Colors.redAccent),
+                    _buildStatItem('趋于掌握', '${controller.masteredCount}', color: Colors.green),
+                  ],
+                ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildStatItem('已追踪词条', '${controller.totalTrackedCardsCount}'),
-                  _buildStatItem('待复习', '${controller.dueReviewCount}', color: Colors.orange),
-                  _buildStatItem('高危顽固', '${controller.criticalCount}', color: Colors.redAccent),
-                  _buildStatItem('趋于掌握', '${controller.masteredCount}', color: Colors.green),
-                ],
-              ),
-            ),
 
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-            // Server Address config
-            Text('后端服务地址', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colorScheme.primary)),
-            const SizedBox(height: 6),
-            if (_isEditingServer)
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _serverController,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              // Server Address config
+              Text('后端服务地址', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colorScheme.primary)),
+              const SizedBox(height: 6),
+              if (_isEditingServer)
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _serverController,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: () async {
-                      await controller.updateServerUrl(_serverController.text);
-                      setState(() {
-                        _isEditingServer = false;
-                      });
-                    },
-                    child: const Text('保存'),
-                  ),
-                ],
-              )
-            else
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      controller.serverUrl,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _isEditingServer = true;
-                      });
-                    },
-                    icon: const Icon(Icons.edit_outlined, size: 16),
-                    label: const Text('修改'),
-                  ),
-                ],
-              ),
-
-            const SizedBox(height: 16),
-
-            // Force Sync Button
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _isSyncing
-                    ? null
-                    : () async {
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: () async {
+                        await controller.updateServerUrl(_serverController.text);
                         setState(() {
-                          _isSyncing = true;
+                          _isEditingServer = false;
                         });
-                        await controller.syncNow();
-                        if (mounted) {
-                          setState(() {
-                            _isSyncing = false;
-                          });
-                        }
                       },
-                icon: _isSyncing
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.sync_rounded),
-                label: Text(_isSyncing ? '正在同步...' : '立即与云端双向同步'),
+                      child: const Text('保存'),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        controller.serverUrl,
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _isEditingServer = true;
+                        });
+                      },
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: const Text('修改'),
+                    ),
+                  ],
+                ),
+
+              const SizedBox(height: 16),
+
+              // Force Sync Button
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _isSyncing
+                      ? null
+                      : () async {
+                          setState(() {
+                            _isSyncing = true;
+                          });
+                          await controller.syncNow();
+                          if (mounted) {
+                            setState(() {
+                              _isSyncing = false;
+                            });
+                          }
+                        },
+                  icon: _isSyncing
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.sync_rounded),
+                  label: Text(_isSyncing ? '正在同步...' : '立即与云端双向同步'),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
       actions: [
@@ -454,4 +522,3 @@ class _AccountInfoDialogState extends State<AccountInfoDialog> {
     );
   }
 }
-

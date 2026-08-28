@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'screens/quiz_screen.dart';
+import 'services/fsrs_repository.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,17 +17,30 @@ class WordNApp extends StatefulWidget {
 class _WordNAppState extends State<WordNApp> {
   ThemeMode _themeMode = ThemeMode.system;
 
-  void _toggleTheme() {
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedTheme();
+  }
+
+  Future<void> _loadSavedTheme() async {
+    final modeStr = await FsrsRepository.getThemeMode();
+    if (mounted) {
+      setState(() {
+        if (modeStr == 'light') {
+          _themeMode = ThemeMode.light;
+        } else if (modeStr == 'dark') {
+          _themeMode = ThemeMode.dark;
+        } else {
+          _themeMode = ThemeMode.system;
+        }
+      });
+    }
+  }
+
+  void _setThemeMode(ThemeMode mode) {
     setState(() {
-      if (_themeMode == ThemeMode.dark) {
-        _themeMode = ThemeMode.light;
-      } else if (_themeMode == ThemeMode.light) {
-        _themeMode = ThemeMode.dark;
-      } else {
-        // If system, switch to dark if current brightness is light, or vice versa
-        final brightness = MediaQuery.platformBrightnessOf(context);
-        _themeMode = brightness == Brightness.dark ? ThemeMode.light : ThemeMode.dark;
-      }
+      _themeMode = mode;
     });
   }
 
@@ -72,7 +86,8 @@ class _WordNAppState extends State<WordNApp> {
                   MediaQuery.platformBrightnessOf(context) == Brightness.dark);
           return QuizScreen(
             isDarkMode: isCurrentlyDark,
-            onToggleTheme: _toggleTheme,
+            currentThemeMode: _themeMode,
+            onThemeChanged: _setThemeMode,
           );
         },
       ),

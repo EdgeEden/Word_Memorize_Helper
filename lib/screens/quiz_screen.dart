@@ -3,16 +3,22 @@ import 'package:flutter/services.dart';
 import '../controllers/quiz_controller.dart';
 import '../models/fsrs/fsrs_models.dart';
 import '../widgets/login_dialog.dart';
+import '../widgets/settings_dialog.dart';
 
 class QuizScreen extends StatefulWidget {
-  final VoidCallback onToggleTheme;
+  final VoidCallback? onToggleTheme;
   final bool isDarkMode;
+  final ThemeMode currentThemeMode;
+  final ValueChanged<ThemeMode>? onThemeChanged;
 
   const QuizScreen({
     super.key,
-    required this.onToggleTheme,
+    this.onToggleTheme,
     required this.isDarkMode,
+    this.currentThemeMode = ThemeMode.system,
+    this.onThemeChanged,
   });
+
 
   @override
   State<QuizScreen> createState() => _QuizScreenState();
@@ -56,14 +62,13 @@ class _QuizScreenState extends State<QuizScreen> {
 
   void _onControllerUpdate() {
     if (mounted) {
-      if (!_controller.isSubmitted) {
-        _textController.clear();
+      if (!_controller.isSubmitted && !_controller.isEvaluating) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && !_controller.isSubmitted) {
+          if (mounted && !_controller.isSubmitted && !_controller.isEvaluating) {
             _focusNode.requestFocus();
           }
         });
-      } else {
+      } else if (_controller.isSubmitted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && _controller.isSubmitted) {
             _nextButtonFocusNode.requestFocus();
@@ -73,6 +78,7 @@ class _QuizScreenState extends State<QuizScreen> {
       setState(() {});
     }
   }
+
 
 
   @override
@@ -104,6 +110,10 @@ class _QuizScreenState extends State<QuizScreen> {
         return false;
       }
 
+      if (_controller.isEvaluating) {
+        return true; // Ignore Enter during AI evaluation
+      }
+
       if (_controller.isSubmitted) {
         _goToNextWord();
         return true;
@@ -117,12 +127,13 @@ class _QuizScreenState extends State<QuizScreen> {
 
   /// Explicitly submit answer (from input field or submit button)
   void _submitAnswer() {
-    if (_controller.isSubmitted) return;
+    if (_controller.isSubmitted || _controller.isEvaluating) return;
     _lastSubmitTime = DateTime.now();
     _ignoreEnterUntilKeyUp = true;
     _focusNode.unfocus();
     _controller.submitAnswer(_textController.text);
   }
+
 
   /// Explicitly advance to next word (from next button or enter key when answer is displayed)
   void _goToNextWord() {
@@ -272,15 +283,25 @@ class _QuizScreenState extends State<QuizScreen> {
               onPressed: _showFsrsMemoryDialog,
             ),
 
-            // Theme toggle button
+            // Unified Settings (Appearance theme & Answer evaluation method)
             IconButton(
-              tooltip: widget.isDarkMode ? '切换至亮色模式' : '切换至暗色模式',
-              icon: Icon(widget.isDarkMode ? Icons.light_mode_outlined : Icons.dark_mode_outlined),
-              onPressed: widget.onToggleTheme,
+              tooltip: '偏好设置',
+              icon: const Icon(Icons.settings_outlined),
+              onPressed: () {
+                SettingsDialog.show(
+                  context,
+                  _controller,
+                  currentThemeMode: widget.currentThemeMode,
+                  onThemeChanged: (mode) {
+                    widget.onThemeChanged?.call(mode);
+                  },
+                );
+              },
             ),
             const SizedBox(width: 8),
           ],
         ),
+
 
         body: _controller.isLoading
             ? Center(
@@ -597,16 +618,22 @@ class _QuizScreenState extends State<QuizScreen> {
               color: colorScheme.onSurface,
             ),
             decoration: InputDecoration(
-              hintText: _controller.isSubmitted ? '已提交答案' : '输入中文释义（按回车提交）...',
+              hintText: _controller.isEvaluating
+                  ? '🤖 DeepSeek 正在智能判定释义...'
+                  : (_controller.isSubmitted ? '已提交答案' : '输入中文释义（按回车提交）...'),
               hintStyle: TextStyle(
                 fontSize: 15,
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                color: _controller.isEvaluating
+                    ? colorScheme.primary
+                    : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                fontWeight: _controller.isEvaluating ? FontWeight.w600 : FontWeight.normal,
               ),
               filled: true,
               fillColor: _controller.isSubmitted
                   ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.25)
                   : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
               contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
                 borderSide: BorderSide.none,
@@ -732,9 +759,38 @@ class _QuizScreenState extends State<QuizScreen> {
                           ],
                         ),
                       ),
+                      if (_controller.evaluationNotice != null) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.amber.withValues(alpha: 0.35)),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.info_outline_rounded, size: 16, color: Colors.amber[800]),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _controller.evaluationNotice!,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.amber[900],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   )
                 : const SizedBox.shrink(),
+
           ),
 
           // 5. Example Sentence Hint Area (ONLY English example, NO Chinese translation)
@@ -897,15 +953,22 @@ class _QuizScreenState extends State<QuizScreen> {
                         ),
                         elevation: 1,
                       ),
-                      onPressed: _submitAnswer,
-                      icon: const Icon(Icons.check_rounded, size: 20),
-                      label: const Text(
-                        '答案提交',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      onPressed: _controller.isEvaluating ? null : _submitAnswer,
+                      icon: _controller.isEvaluating
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.check_rounded, size: 20),
+                      label: Text(
+                        _controller.isEvaluating ? 'AI 判定中...' : '答案提交',
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
                 ),
+
               ],
             ),
     );
@@ -973,7 +1036,7 @@ class _FsrsMemoryDialogState extends State<_FsrsMemoryDialog> {
                 const SizedBox(width: 8),
                 _buildFilterChip(2, '🟡 巩固中 (${widget.controller.consolidatingCount})', Colors.orange),
                 const SizedBox(width: 8),
-                _buildFilterChip(3, '🟢 趋于掌握 (${widget.controller.masterCountSafe})', Colors.green),
+                _buildFilterChip(3, '🟢 趋于掌握 (${widget.controller.masteredCount})', Colors.green),
               ],
             ),
           ),
@@ -1107,6 +1170,3 @@ class _FsrsMemoryDialogState extends State<_FsrsMemoryDialog> {
   }
 }
 
-extension on QuizController {
-  int get masterCountSafe => masteredCount;
-}

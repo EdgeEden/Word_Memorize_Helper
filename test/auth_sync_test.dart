@@ -72,4 +72,29 @@ void main() {
     expect(controller.isLoggedIn, isFalse);
     expect(controller.currentUsername, isNull);
   });
+
+  test('Persistent auto-login on application startup across restarts', () async {
+    // 1. Simulate a previous user login and cards saved locally
+    await FsrsRepository.setCurrentUser('sarah');
+    await FsrsRepository.saveCards({
+      'abandon': FsrsCard(word: 'abandon', reps: 5, stability: 12.0),
+    }, 'sarah');
+
+    // 2. Launch new QuizController (simulating fresh app startup)
+    final freshController = QuizController();
+    await freshController.init();
+
+    // 3. Verify auto-login succeeded without prompting
+    expect(freshController.isLoggedIn, isTrue);
+    expect(freshController.currentUsername, 'sarah');
+    expect(freshController.totalTrackedCardsCount, 1);
+    expect(freshController.allCards.first.word, 'abandon');
+    expect(freshController.allCards.first.stability, 12.0);
+
+    // 4. Verify history contains logged in users
+    final history = await FsrsRepository.getUserHistory();
+    expect(history.contains('sarah'), isTrue);
+  });
 }
+
+

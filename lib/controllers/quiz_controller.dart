@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/fsrs/fsrs_models.dart';
 import '../models/fsrs/fsrs_scheduler.dart';
 import '../models/word_item.dart';
+import '../services/ai_service.dart';
 import '../services/api_service.dart';
 import '../services/dict_service.dart';
 import '../services/fsrs_repository.dart';
@@ -12,6 +13,11 @@ enum SyncStatus {
   syncing, // 🟡 正在同步
   offline, // ⚪ 离线运行
   failed,  // 🔴 同步出错
+}
+
+enum EvaluationMode {
+  localMatcher, // 本地词典分词匹配 (离线秒判)
+  deepseekAi,   // DeepSeek AI 语义判定
 }
 
 class QuizController extends ChangeNotifier {
@@ -43,6 +49,13 @@ class QuizController extends ChangeNotifier {
   String _serverUrl = ApiService.getDefaultServerUrl();
   SyncStatus _syncStatus = SyncStatus.synced;
 
+  // Evaluation & AI State
+  EvaluationMode _evalMode = EvaluationMode.localMatcher;
+  String _deepseekApiKey = '';
+  String _deepseekBaseUrl = DeepSeekService.defaultBaseUrl;
+  bool _isEvaluating = false;
+  String? _evaluationNotice;
+
   final Random _random = Random();
 
   // Getters
@@ -70,6 +83,13 @@ class QuizController extends ChangeNotifier {
   bool get isLoggedIn => _currentUsername != null && _currentUsername!.isNotEmpty;
   SyncStatus get syncStatus => _syncStatus;
   String get serverUrl => _serverUrl;
+
+  // Evaluation Getters
+  EvaluationMode get evalMode => _evalMode;
+  String get deepseekApiKey => _deepseekApiKey;
+  String get deepseekBaseUrl => _deepseekBaseUrl;
+  bool get isEvaluating => _isEvaluating;
+  String? get evaluationNotice => _evaluationNotice;
 
   // FSRS Metrics
   List<FsrsCard> get allCards => _fsrsCards.values.toList();
@@ -115,6 +135,12 @@ class QuizController extends ChangeNotifier {
       _currentUsername = await FsrsRepository.getCurrentUser();
       _serverUrl = await FsrsRepository.getServerUrl();
 
+      // Load persisted evaluation settings & DeepSeek API Key
+      final modeStr = await FsrsRepository.getEvalMode();
+      _evalMode = modeStr == 'deepseek' ? EvaluationMode.deepseekAi : EvaluationMode.localMatcher;
+      _deepseekApiKey = await FsrsRepository.getDeepSeekApiKey();
+      _deepseekBaseUrl = await FsrsRepository.getDeepSeekBaseUrl();
+
       // Load persisted FSRS memory cards for current user
       _fsrsCards = await FsrsRepository.loadCards(_currentUsername);
 
@@ -136,35 +162,68 @@ class QuizController extends ChangeNotifier {
     }
   }
 
+  /// Set evaluation mode (local vs deepseek)
+  Future<void> setEvalMode(EvaluationMode mode) async {
+    _evalMode = mode;
+    await FsrsRepository.setEvalMode(mode == EvaluationMode.deepseekAi ? 'deepseek' : 'local');
+    notifyListeners();
+  }
+
+  /// Update DeepSeek configuration and persist locally
+  Future<void> updateDeepSeekConfig({required String apiKey, String? baseUrl}) async {
+    _deepseekApiKey = apiKey.trim();
+    if (baseUrl != null && baseUrl.trim().isNotEmpty) {
+      _deepseekBaseUrl = baseUrl.trim();
+      await FsrsRepository.setDeepSeekBaseUrl(_deepseekBaseUrl);
+    }
+    await FsrsRepository.setDeepSeekApiKey(_deepseekApiKey);
+    notifyListeners();
+  }
+
   /// Login or register a user and sync their cloud cards
   Future<bool> login(String username) async {
     final cleanUsername = username.trim().toLowerCase();
     if (cleanUsername.isEmpty) return false;
 
-    _currentUsername = cleanUsername;
-    await FsrsRepository.setCurrentUser(cleanUsername);
-
-    _syncStatus = SyncStatus.syncing;
+    _isLoading = true;
     notifyListeners();
 
-    // 1. Load any existing local cards for this user
-    final localCards = await FsrsRepository.loadCards(cleanUsername);
-    _fsrsCards = Map.from(localCards);
+    try {
+      _currentUsername = cleanUsername;
+      await FsrsRepository.setCurrentUser(cleanUsername);
 
-    // 2. Contact Python backend
-    final result = await ApiService.loginOrRegister(cleanUsername, serverUrl: _serverUrl);
-    if (result != null) {
-      final Map<String, FsrsCard> remoteCards = result['cards'] as Map<String, FsrsCard>? ?? {};
-      _mergeCards(remoteCards);
-      await FsrsRepository.saveCards(_fsrsCards, cleanUsername);
-      _syncStatus = SyncStatus.synced;
-    } else {
-      _syncStatus = SyncStatus.offline;
+      // 1. Load local cards for this user first
+      _fsrsCards = await FsrsRepository.loadCards(cleanUsername);
+
+      // 2. Connect to server
+      _syncStatus = SyncStatus.syncing;
+      notifyListeners();
+
+      final loginResult = await ApiService.loginOrRegister(
+        cleanUsername,
+        serverUrl: _serverUrl,
+      );
+
+      if (loginResult != null) {
+        final serverCards = loginResult['cards'] as Map<String, FsrsCard>? ?? {};
+        // Merge remote cards with local cards
+        _mergeCards(serverCards);
+        await FsrsRepository.saveCards(_fsrsCards, cleanUsername);
+        _syncStatus = SyncStatus.synced;
+      } else {
+        _syncStatus = SyncStatus.offline;
+      }
+
+      _pickNextWord();
+      return true;
+    } catch (e) {
+      debugPrint('Login exception: $e');
+      _syncStatus = SyncStatus.failed;
+      return true; // Still allow local offline usage
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
-
-    _pickNextWord();
-    notifyListeners();
-    return true;
   }
 
   /// Logout current user
@@ -172,90 +231,91 @@ class QuizController extends ChangeNotifier {
     _currentUsername = null;
     await FsrsRepository.setCurrentUser(null);
     _fsrsCards = {};
-    _syncStatus = SyncStatus.offline;
     _pickNextWord();
     notifyListeners();
   }
 
-  /// Trigger manual two-way sync
-  Future<void> syncNow() async {
-    if (!isLoggedIn) return;
-
-    _syncStatus = SyncStatus.syncing;
-    notifyListeners();
-
-    final remoteCards = await ApiService.fetchCards(_currentUsername!, serverUrl: _serverUrl);
-    if (remoteCards != null) {
-      _mergeCards(remoteCards);
-      await FsrsRepository.saveCards(_fsrsCards, _currentUsername);
-      final pushSuccess = await ApiService.syncCards(_currentUsername!, _fsrsCards, serverUrl: _serverUrl);
-      _syncStatus = pushSuccess ? SyncStatus.synced : SyncStatus.failed;
-    } else {
-      _syncStatus = SyncStatus.offline;
-    }
-
-    notifyListeners();
-  }
-
-  /// Update backend server URL
+  /// Update server URL and trigger a sync test
   Future<void> updateServerUrl(String newUrl) async {
-    final cleanUrl = newUrl.trim().replaceAll(RegExp(r'/+$'), '');
-    if (cleanUrl.isEmpty) return;
-
-    _serverUrl = cleanUrl;
+    _serverUrl = newUrl.trim();
     await FsrsRepository.setServerUrl(_serverUrl);
     notifyListeners();
-    await syncNow();
+    if (isLoggedIn) {
+      syncNow();
+    }
   }
 
-  /// Merge remote cards into local cards (preferring newer/higher reps)
-  void _mergeCards(Map<String, FsrsCard> remoteCards) {
-    for (final entry in remoteCards.entries) {
-      final wordKey = entry.key.toLowerCase();
-      final remoteCard = entry.value;
-      if (!_fsrsCards.containsKey(wordKey)) {
-        _fsrsCards[wordKey] = remoteCard;
+  /// Manually trigger a full bidirectional sync
+  Future<void> syncNow() async {
+    if (!isLoggedIn) return;
+    _syncStatus = SyncStatus.syncing;
+    notifyListeners();
+
+    try {
+      final remoteCards = await ApiService.fetchCards(_currentUsername!, serverUrl: _serverUrl);
+      if (remoteCards != null) {
+        _mergeCards(remoteCards);
+        await FsrsRepository.saveCards(_fsrsCards, _currentUsername);
+        final pushSuccess = await ApiService.syncCards(_currentUsername!, _fsrsCards, serverUrl: _serverUrl);
+        _syncStatus = pushSuccess ? SyncStatus.synced : SyncStatus.failed;
       } else {
-        final localCard = _fsrsCards[wordKey]!;
-        // Choose card with more reps or more recent review
+        _syncStatus = SyncStatus.offline;
+      }
+    } catch (_) {
+      _syncStatus = SyncStatus.offline;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  /// Smart Card Merging Algorithm
+  void _mergeCards(Map<String, FsrsCard> remoteCards) {
+    remoteCards.forEach((word, remoteCard) {
+      final localCard = _fsrsCards[word];
+      if (localCard == null) {
+        _fsrsCards[word] = remoteCard;
+      } else {
+        // If both exist, take the one with higher reps or later review time
         if (remoteCard.reps > localCard.reps) {
-          _fsrsCards[wordKey] = remoteCard;
-        } else if (remoteCard.reps == localCard.reps &&
-            remoteCard.lastReview != null &&
-            (localCard.lastReview == null || remoteCard.lastReview!.isAfter(localCard.lastReview!))) {
-          _fsrsCards[wordKey] = remoteCard;
+          _fsrsCards[word] = remoteCard;
+        } else if (remoteCard.reps == localCard.reps) {
+          if (remoteCard.lastReview != null && localCard.lastReview != null) {
+            if (remoteCard.lastReview!.isAfter(localCard.lastReview!)) {
+              _fsrsCards[word] = remoteCard;
+            }
+          }
         }
       }
-    }
+    });
   }
 
-  /// Asynchronously pull cloud cards on startup
+  /// Background pull and merge on login
   Future<void> _pullAndMergeCloudCards() async {
     if (!isLoggedIn) return;
-
     _syncStatus = SyncStatus.syncing;
     notifyListeners();
 
-    final remoteCards = await ApiService.fetchCards(_currentUsername!, serverUrl: _serverUrl);
-    if (remoteCards != null) {
-      _mergeCards(remoteCards);
-      await FsrsRepository.saveCards(_fsrsCards, _currentUsername);
-      _syncStatus = SyncStatus.synced;
-    } else {
+    try {
+      final remoteCards = await ApiService.fetchCards(_currentUsername!, serverUrl: _serverUrl);
+      if (remoteCards != null) {
+        _mergeCards(remoteCards);
+        await FsrsRepository.saveCards(_fsrsCards, _currentUsername);
+        _syncStatus = SyncStatus.synced;
+      } else {
+        _syncStatus = SyncStatus.offline;
+      }
+    } catch (_) {
       _syncStatus = SyncStatus.offline;
+    } finally {
+      notifyListeners();
     }
-    notifyListeners();
   }
 
-  /// Asynchronously push updated cards to server
+  /// Asynchronous push sync to server on card change
   void _pushSyncToServer() {
     if (!isLoggedIn) return;
-
-    _syncStatus = SyncStatus.syncing;
-    notifyListeners();
-
     ApiService.syncCards(_currentUsername!, _fsrsCards, serverUrl: _serverUrl).then((success) {
-      _syncStatus = success ? SyncStatus.synced : SyncStatus.offline;
+      _syncStatus = success ? SyncStatus.synced : SyncStatus.failed;
       notifyListeners();
     }).catchError((_) {
       _syncStatus = SyncStatus.offline;
@@ -269,13 +329,50 @@ class QuizController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Submit answer, update FSRS memory state, and schedule next review
-  void submitAnswer(String input) {
-    if (_isSubmitted || _currentWord == null) return;
+  /// Submit answer, evaluate correctness (via DeepSeek AI or Local Matcher),
+  /// update FSRS memory state, and schedule next review
+  Future<void> submitAnswer(String input) async {
+    if (_isSubmitted || _isEvaluating || _currentWord == null) return;
 
     _lastUserInput = input.trim();
+    _evaluationNotice = null;
+
+    bool isAnswerCorrect;
+
+    // AI Semantic Evaluation Mode
+    if (_evalMode == EvaluationMode.deepseekAi) {
+      if (_deepseekApiKey.trim().isEmpty) {
+        // Fallback to local rule matcher if no API key is provided
+        isAnswerCorrect = _currentWord!.checkAnswer(_lastUserInput);
+        _evaluationNotice = '未配置 DeepSeek API Key，已自动使用本地词典匹配';
+      } else {
+        _isEvaluating = true;
+        notifyListeners();
+
+        final aiResult = await DeepSeekService.evaluateAnswer(
+          word: _currentWord!.word,
+          userInput: _lastUserInput,
+          apiKey: _deepseekApiKey,
+          baseUrl: _deepseekBaseUrl,
+        );
+
+        _isEvaluating = false;
+
+        if (aiResult != null) {
+          isAnswerCorrect = aiResult;
+        } else {
+          // AI connection error or timeout, gracefully fallback to local matcher
+          isAnswerCorrect = _currentWord!.checkAnswer(_lastUserInput);
+          _evaluationNotice = 'DeepSeek 连接异常，已自动回退为本地词典匹配';
+        }
+      }
+    } else {
+      // Standard local keyword matcher
+      isAnswerCorrect = _currentWord!.checkAnswer(_lastUserInput);
+    }
+
     _isSubmitted = true;
-    _isCorrect = _currentWord!.checkAnswer(_lastUserInput);
+    _isCorrect = isAnswerCorrect;
 
     _totalAnswered++;
     _sessionStepCounter++;
@@ -338,6 +435,7 @@ class QuizController extends ChangeNotifier {
     _isCorrect = null;
     _showHint = false;
     _lastUserInput = '';
+    _evaluationNotice = null;
 
     final now = DateTime.now();
 
