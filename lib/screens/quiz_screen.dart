@@ -35,6 +35,7 @@ class _QuizScreenState extends State<QuizScreen> {
   @override
 
   void initState() {
+    super.initState();
     _controller = QuizController();
     _textController = TextEditingController();
     _focusNode = FocusNode();
@@ -45,6 +46,7 @@ class _QuizScreenState extends State<QuizScreen> {
 
     _initAppAndCheckLogin();
   }
+
 
   Future<void> _initAppAndCheckLogin() async {
     await _controller.init();
@@ -114,6 +116,10 @@ class _QuizScreenState extends State<QuizScreen> {
 
       if (_ignoreEnterUntilKeyUp) {
         return true; // Ignore key repeat or hold-down from initial submission
+      }
+
+      if (_controller.isSubmitted) {
+        _goToNextWord();
         return true;
       } else {
         _submitAnswer();
@@ -135,6 +141,7 @@ class _QuizScreenState extends State<QuizScreen> {
 
   /// Explicitly advance to next word (from next button or enter key when answer is displayed)
   void _goToNextWord() {
+    if (!_controller.isSubmitted) return;
 
     _ignoreEnterUntilKeyUp = false;
     _textController.clear();
@@ -157,6 +164,7 @@ class _QuizScreenState extends State<QuizScreen> {
   }
 
   Widget _buildSyncIcon(SyncStatus status) {
+    switch (status) {
       case SyncStatus.synced:
         return const Icon(Icons.cloud_done_rounded, color: Colors.green, size: 22);
       case SyncStatus.syncing:
@@ -171,6 +179,7 @@ class _QuizScreenState extends State<QuizScreen> {
         return const Icon(Icons.cloud_sync_outlined, color: Colors.redAccent, size: 22);
     }
   }
+
 
   String _getSyncTooltip(SyncStatus status) {
     switch (status) {
