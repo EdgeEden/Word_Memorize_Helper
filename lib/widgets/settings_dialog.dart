@@ -3,6 +3,7 @@ import '../controllers/quiz_controller.dart';
 import '../services/ai_service.dart';
 import '../services/fsrs_repository.dart';
 import '../services/update_service.dart';
+import '../widgets/custom_dict_dialog.dart';
 import '../widgets/update_dialog.dart';
 
 /// Unified Settings Dialog for Appearance Theme & Answer Evaluation Methods
@@ -173,12 +174,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
       return;
     }
 
-    if (_selectedModel.trim().isEmpty) {
-      setState(() {
-        _testApiSuccess = false;
-        _testApiResult = '请先获取并选择模型后再测试连通性';
-      });
-      return;
+    String modelToTest = _selectedModel.trim();
+    if (modelToTest.isEmpty) {
+      if (_availableModels.isEmpty) {
+        await _fetchAvailableModels();
+        modelToTest = _selectedModel.trim();
+      }
+      if (modelToTest.isEmpty) {
+        modelToTest = DeepSeekService.defaultModel;
+      }
     }
 
     setState(() {
@@ -190,7 +194,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final res = await DeepSeekService.testConnection(
       key,
       baseUrl: _baseUrlController.text.trim(),
-      model: _selectedModel,
+      model: modelToTest,
     );
 
     if (!mounted) return;
@@ -232,7 +236,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       if (key.isEmpty) {
         await _showAlertDialog(
           title: '请配置 API Key',
-          message: '您选择了 AI 大模型判定模式，但尚未输入 API Key。请先填写 API Key 并获取选择模型。',
+          message: '您选择了 AI 判定模式，但尚未输入 API Key。请先填写 API Key 并获取选择模型。',
         );
         return;
       }
@@ -355,7 +359,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ButtonSegment(
                       value: EvaluationMode.deepseekAi,
                       icon: Icon(Icons.auto_awesome_rounded, size: 18),
-                      label: Text('AI 大模型判定'),
+                      label: Text('AI 判定'),
                     ),
                   ],
                   selected: {_selectedEvalMode},
@@ -404,15 +408,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       const SizedBox(height: 12),
 
                       // API Key Field
+                      Text(
+                        'API Key',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: colorScheme.onSurface),
+                      ),
+                      const SizedBox(height: 6),
                       TextField(
                         controller: _apiKeyController,
                         obscureText: _obscureApiKey,
                         decoration: InputDecoration(
-                          labelText: 'API Key',
-                          floatingLabelBehavior: FloatingLabelBehavior.always,
                           hintText: 'sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
                           prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20),
-
                           suffixIcon: IconButton(
                             icon: Icon(
                               _obscureApiKey ? Icons.visibility_off_outlined : Icons.visibility_outlined,
@@ -425,77 +431,83 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             },
                           ),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          helperText: 'API Key 将保存在本地，下次启动自动填充',
+                          helperText: 'API Key将保存在本地',
                           helperMaxLines: 2,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                         ),
                       ),
                       const SizedBox(height: 12),
 
                       // Base URL Field
+                      Text(
+                        'API Base URL',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: colorScheme.onSurface),
+                      ),
+                      const SizedBox(height: 6),
                       TextField(
                         controller: _baseUrlController,
                         decoration: InputDecoration(
-                          labelText: 'API Base URL (可选)',
-                          floatingLabelBehavior: FloatingLabelBehavior.always,
                           hintText: 'https://api.deepseek.com',
                           prefixIcon: const Icon(Icons.link_rounded, size: 20),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                           isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                         ),
                       ),
                       const SizedBox(height: 12),
 
-                      // Model Dropdown Selection & Fetch Button
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-
-
-                              key: ValueKey('$_selectedModel-${_availableModels.length}'),
-                              initialValue: _availableModels.contains(_selectedModel) && _selectedModel.isNotEmpty
-                                  ? _selectedModel
-                                  : null,
-                              hint: Text(
-                                _availableModels.isEmpty ? '请先点击右侧按钮获取模型' : '请选择模型',
-                                style: const TextStyle(fontSize: 13, color: Colors.grey),
-                              ),
-                              decoration: InputDecoration(
-                                labelText: '选择使用的 AI 模型',
-                                floatingLabelBehavior: FloatingLabelBehavior.always,
-                                prefixIcon: const Icon(Icons.smart_toy_outlined, size: 20),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                isDense: true,
-                              ),
-
-                              isExpanded: true,
-                              items: _availableModels.map((m) {
-                                return DropdownMenuItem<String>(
-                                  value: m,
-                                  child: Text(
-                                    m,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                );
-                              }).toList(),
-                              onChanged: (val) {
-                                if (val != null) {
-                                  setState(() {
-                                    _selectedModel = val;
-                                  });
-                                }
-                              },
+                      // Model Dropdown Selection
+                      Text(
+                        '选择使用的 AI 模型',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: colorScheme.onSurface),
+                      ),
+                      const SizedBox(height: 6),
+                      DropdownButtonFormField<String>(
+                        key: ValueKey('$_selectedModel-${_availableModels.length}'),
+                        initialValue: _availableModels.contains(_selectedModel) && _selectedModel.isNotEmpty
+                            ? _selectedModel
+                            : null,
+                        hint: Text(
+                          _availableModels.isEmpty ? '请先点击下方按钮获取模型' : '请选择模型',
+                          style: const TextStyle(fontSize: 13, color: Colors.grey),
+                        ),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.smart_toy_outlined, size: 20),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        ),
+                        isExpanded: true,
+                        items: _availableModels.map((m) {
+                          return DropdownMenuItem<String>(
+                            value: m,
+                            child: Text(
+                              m,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            height: 48,
-                            child: OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(horizontal: 12),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() {
+                              _selectedModel = val;
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Action Buttons Row: Fetch Models & Test Connection
+                      Row(
+                        children: [
+                          // Button 1: 获取模型 (Primary Tonal)
+                          Expanded(
+                            child: FilledButton.tonalIcon(
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                               ),
                               onPressed: _isFetchingModels ? null : _fetchAvailableModels,
                               icon: _isFetchingModels
@@ -504,77 +516,81 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                       height: 14,
                                       child: CircularProgressIndicator(strokeWidth: 2),
                                     )
-                                  : const Icon(Icons.sync_rounded, size: 18),
-                              label: Text(_isFetchingModels ? '获取中' : '获取模型'),
+                                  : const Icon(Icons.sync_rounded, size: 16),
+                              label: Text(_isFetchingModels ? '获取中...' : '获取模型'),
                             ),
-                          ),
-                        ],
-                      ),
-                      if (_fetchModelsResult != null) ...[
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Icon(
-                              _fetchModelsSuccess == true ? Icons.check_circle_rounded : Icons.info_outline_rounded,
-                              size: 14,
-                              color: _fetchModelsSuccess == true ? Colors.green : Colors.orangeAccent,
-                            ),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                _fetchModelsResult!,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: _fetchModelsSuccess == true ? Colors.green : Colors.orangeAccent,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-
-
-                      // Test Connection Button & Status
-                      Row(
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: _isTestingApi ? null : _testDeepSeekConnection,
-                            icon: _isTestingApi
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Icon(Icons.speed_rounded, size: 16),
-                            label: Text(_isTestingApi ? '正在测试...' : '测试连通性'),
                           ),
                           const SizedBox(width: 10),
-                          if (_testApiResult != null)
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    _testApiSuccess == true ? Icons.check_circle_rounded : Icons.error_outline_rounded,
-                                    size: 16,
-                                    color: _testApiSuccess == true ? Colors.green : Colors.redAccent,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      _testApiResult!,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: _testApiSuccess == true ? Colors.green : Colors.redAccent,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                          // Button 2: 测试连通性 (Tertiary Tonal with distinct color)
+                          Expanded(
+                            child: FilledButton.tonalIcon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: colorScheme.tertiaryContainer.withValues(alpha: 0.7),
+                                foregroundColor: colorScheme.onTertiaryContainer,
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                               ),
+                              onPressed: _isTestingApi ? null : _testDeepSeekConnection,
+                              icon: _isTestingApi
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.speed_rounded, size: 16),
+                              label: Text(_isTestingApi ? '测试中...' : '测试连通性'),
                             ),
+                          ),
                         ],
                       ),
+
+                      // Status & Result feedback
+                      if (_fetchModelsResult != null || _testApiResult != null) ...[
+                        const SizedBox(height: 8),
+                        if (_fetchModelsResult != null)
+                          Row(
+                            children: [
+                              Icon(
+                                _fetchModelsSuccess == true ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+                                size: 14,
+                                color: _fetchModelsSuccess == true ? Colors.green : Colors.orangeAccent,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _fetchModelsResult!,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: _fetchModelsSuccess == true ? Colors.green : Colors.orangeAccent,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        if (_fetchModelsResult != null && _testApiResult != null)
+                          const SizedBox(height: 4),
+                        if (_testApiResult != null)
+                          Row(
+                            children: [
+                              Icon(
+                                _testApiSuccess == true ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                                size: 14,
+                                color: _testApiSuccess == true ? Colors.green : Colors.redAccent,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _testApiResult!,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: _testApiSuccess == true ? Colors.green : Colors.redAccent,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
                     ],
                   ),
                 ),
@@ -639,6 +655,96 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ],
                 ),
               ),
+
+              const SizedBox(height: 18),
+
+              // -------------------------------------------------------------
+              // 5. Advanced Options (Collapsible)
+              // -------------------------------------------------------------
+              Theme(
+                data: theme.copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  collapsedBackgroundColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
+                  backgroundColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                  ),
+                  collapsedShape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                  ),
+                  leading: Icon(Icons.tune_rounded, size: 20, color: colorScheme.primary),
+                  title: const Text(
+                    '高级选项',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    '自定义词库导入、本地与云端错题本重置',
+                    style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                  ),
+                  childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  children: [
+                    // Item 1: Custom Dictionary Management
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(Icons.library_add_rounded, size: 20, color: colorScheme.primary),
+                      ),
+                      title: const Text('自定义词库管理与导入', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      subtitle: Text(
+                        '导入自定义 CSV 词库文件，支持多端增量同步',
+                        style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                      ),
+                      trailing: FilledButton.tonalIcon(
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: _handleOpenCustomDictManagement,
+                        icon: const Icon(Icons.settings_outlined, size: 16),
+                        label: const Text('管理与导入', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                    const Divider(height: 20),
+
+                    // Item 2: Clear Wrong Book Data
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: colorScheme.errorContainer.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(Icons.delete_sweep_rounded, size: 20, color: colorScheme.error),
+                      ),
+                      title: const Text('清除错题本与复习数据', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      subtitle: Text(
+                        '重置当前词库或所有词库的 FSRS 记忆曲线与错题记录（同步删除云端）',
+                        style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                      ),
+                      trailing: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: colorScheme.error,
+                          side: BorderSide(color: colorScheme.error.withValues(alpha: 0.6)),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: _showClearWrongBookDialog,
+                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                        label: const Text('清除数据', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -692,6 +798,137 @@ class _SettingsDialogState extends State<SettingsDialog> {
     }
   }
 
+  Future<void> _handleOpenCustomDictManagement() async {
+    await showDialog(
+      context: context,
+      builder: (_) => CustomDictDialog(controller: widget.controller),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _showClearWrongBookDialog() async {
+    final currentDict = widget.controller.currentDict;
+    int selectedOption = 1; // 1: current dict, 2: all dicts
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            final theme = Theme.of(dialogCtx);
+            final colorScheme = theme.colorScheme;
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 22),
+                  const SizedBox(width: 8),
+                  const Text('清除错题本与复习数据', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: SizedBox(
+                width: 440,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '该操作将彻底重置您在所选词库中的 FSRS 记忆曲线、熟练度等级与所有错题记录，并同步清除云端对应的已同步数据。',
+                      style: TextStyle(fontSize: 13, height: 1.4, color: colorScheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text('请选择清除范围：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => setDialogState(() => selectedOption = 1),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Icon(
+                              selectedOption == 1 ? Icons.radio_button_checked : Icons.radio_button_off,
+                              size: 20,
+                              color: selectedOption == 1 ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('仅清除当前词库 (${currentDict.name})', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                                  Text('仅重置「${currentDict.name}」的错题本，不影响其他词库', style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => setDialogState(() => selectedOption = 2),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Icon(
+                              selectedOption == 2 ? Icons.radio_button_checked : Icons.radio_button_off,
+                              size: 20,
+                              color: selectedOption == 2 ? Colors.redAccent : colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('清除所有词库（全部重置）', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.redAccent)),
+                                  Text('重置所有内置与自定义词库的记忆记录', style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                  onPressed: () => Navigator.of(dialogCtx).pop(true),
+                  child: const Text('确认清除'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed == true && mounted) {
+      final success = await widget.controller.clearWrongBookData(clearAll: selectedOption == 2);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            success
+                ? (selectedOption == 2 ? '已成功清除所有词库的错题本数据' : '已成功清除「${currentDict.name}」的错题本数据')
+                : '清除错题本数据失败，请重试',
+          ),
+          backgroundColor: success ? Colors.teal : Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
 
   Widget _buildSectionTitle(BuildContext context, IconData icon, String title) {
     final colorScheme = Theme.of(context).colorScheme;

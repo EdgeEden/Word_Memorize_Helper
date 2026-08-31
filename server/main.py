@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi.responses import FileResponse
-from database import init_db, login_or_register_user, get_user_cards, upsert_user_cards
+from database import init_db, login_or_register_user, get_user_cards, upsert_user_cards, delete_user_cards
 from models import LoginRequest, LoginResponse, SyncRequest, SyncResponse, HealthResponse, AppVersionResponse
 
 app = FastAPI(
@@ -47,7 +47,11 @@ def on_startup():
 
 @app.get("/api/health", response_model=HealthResponse)
 def health_check():
-    return {"status": "ok", "version": "1.0.0"}
+    return {
+        "status": "healthy",
+        "app": "WordN Sync Server",
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 @app.post("/api/login", response_model=LoginResponse)
 def login_or_register(payload: LoginRequest):
@@ -55,8 +59,9 @@ def login_or_register(payload: LoginRequest):
     if not username:
         raise HTTPException(status_code=400, detail="Username cannot be empty")
 
+    dict_id = payload.dict_id.strip().lower() if payload.dict_id else "kaoyan4533"
     user_info = login_or_register_user(username)
-    cards = get_user_cards(username)
+    cards = get_user_cards(username, dict_id=dict_id)
     return {
         "id": user_info["id"],
         "username": user_info["username"],
@@ -65,11 +70,16 @@ def login_or_register(payload: LoginRequest):
     }
 
 @app.get("/api/cards")
-def fetch_cards(username: str = Query(..., min_length=1)):
+def fetch_cards(
+    username: str = Query(..., min_length=1),
+    dict_id: str = Query("kaoyan4533")
+):
     clean_username = username.strip().lower()
-    cards = get_user_cards(clean_username)
+    clean_dict_id = dict_id.strip().lower() if dict_id else "kaoyan4533"
+    cards = get_user_cards(clean_username, dict_id=clean_dict_id)
     return {
         "username": clean_username,
+        "dict_id": clean_dict_id,
         "cards": cards,
         "count": len(cards),
         "updated_at": datetime.utcnow().isoformat()
@@ -81,13 +91,31 @@ def sync_cards(payload: SyncRequest):
     if not clean_username:
         raise HTTPException(status_code=400, detail="Username cannot be empty")
 
+    clean_dict_id = payload.dict_id.strip().lower() if payload.dict_id else "kaoyan4533"
+
     # Ensure user exists
     login_or_register_user(clean_username)
-    saved = upsert_user_cards(clean_username, payload.cards)
+    saved = upsert_user_cards(clean_username, payload.cards, dict_id=clean_dict_id)
     return {
         "status": "ok",
         "saved_count": saved,
         "updated_at": datetime.utcnow().isoformat()
+    }
+
+@app.delete("/api/cards")
+def clear_cards(
+    username: str = Query(..., min_length=1),
+    dict_id: str = Query(None, description="Specific dict_id or empty for all dicts")
+):
+    clean_username = username.strip().lower()
+    clean_dict = dict_id.strip().lower() if (dict_id and dict_id.strip().lower() != "all") else None
+    deleted = delete_user_cards(clean_username, clean_dict)
+    return {
+        "status": "ok",
+        "username": clean_username,
+        "dict_id": clean_dict or "all",
+        "deleted_count": deleted,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/api/version/latest", response_model=AppVersionResponse)

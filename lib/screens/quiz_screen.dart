@@ -5,6 +5,7 @@ import '../models/fsrs/fsrs_models.dart';
 import '../widgets/login_dialog.dart';
 import '../widgets/settings_dialog.dart';
 import '../widgets/update_dialog.dart';
+import '../widgets/custom_dict_dialog.dart';
 
 
 class QuizScreen extends StatefulWidget {
@@ -332,7 +333,7 @@ class _QuizScreenState extends State<QuizScreen> {
                   children: [
                     CircularProgressIndicator(color: colorScheme.primary),
                     const SizedBox(height: 16),
-                    const Text('正在加载考研 4533 词库...', style: TextStyle(fontSize: 14)),
+                    Text('正在加载${_controller.currentDict.name}词库...', style: const TextStyle(fontSize: 14)),
                   ],
                 ),
               )
@@ -405,36 +406,60 @@ class _QuizScreenState extends State<QuizScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Mode chip (Pinned to left)
+                  // Mode chip / Dict selector (Pinned to left)
                   InkWell(
                     borderRadius: BorderRadius.circular(20),
-                    onTap: _controller.totalTrackedCardsCount > 0
-                        ? _controller.toggleWrongReviewMode
-                        : null,
+                    onTap: () {
+                      if (_controller.isWrongReviewMode) {
+                        _controller.toggleWrongReviewMode();
+                      } else {
+                        _showDictSelectorDialog(context);
+                      }
+                    },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: _controller.isWrongReviewMode
                             ? Colors.orange.withValues(alpha: 0.15)
                             : colorScheme.primaryContainer.withValues(alpha: 0.5),
                         borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: _controller.isWrongReviewMode
+                              ? Colors.orange.withValues(alpha: 0.4)
+                              : colorScheme.primary.withValues(alpha: 0.25),
+                          width: 1,
+                        ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            _controller.isWrongReviewMode ? Icons.replay_rounded : Icons.shuffle_rounded,
-                            size: 13,
+                            _controller.isWrongReviewMode
+                                ? Icons.replay_rounded
+                                : _controller.currentDict.icon,
+                            size: 14,
                             color: _controller.isWrongReviewMode ? Colors.orange[800] : colorScheme.primary,
                           ),
-                          const SizedBox(width: 4),
+                          const SizedBox(width: 5),
                           Text(
-                            _controller.isWrongReviewMode ? '错题专练' : '考研 4533',
+                            _controller.isWrongReviewMode
+                                ? '错题专练 · ${_controller.currentDict.shortName}'
+                                : _controller.currentDict.name,
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                               color: _controller.isWrongReviewMode ? Colors.orange[800] : colorScheme.primary,
                             ),
+                          ),
+                          const SizedBox(width: 3),
+                          Icon(
+                            _controller.isWrongReviewMode
+                                ? Icons.close_rounded
+                                : Icons.arrow_drop_down_rounded,
+                            size: 15,
+                            color: _controller.isWrongReviewMode
+                                ? Colors.orange[800]
+                                : colorScheme.primary.withValues(alpha: 0.7),
                           ),
                         ],
                       ),
@@ -1046,6 +1071,193 @@ class _QuizScreenState extends State<QuizScreen> {
             ),
     );
   }
+
+  /// Dialog to select dictionary
+  void _showDictSelectorDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        final colorScheme = Theme.of(dialogContext).colorScheme;
+        final currentDictId = _controller.currentDictId;
+
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          titlePadding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+          contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: colorScheme.primaryContainer.withValues(alpha: 0.6),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.auto_stories_rounded, color: colorScheme.primary, size: 22),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('选择词库', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(
+                      '不同词库独立记录 FSRS 记忆曲线与错题本',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: _controller.availableDicts.map((dict) {
+                  final isSelected = dict.id == currentDictId;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () async {
+                        Navigator.pop(dialogContext);
+                        if (!isSelected) {
+                          await _controller.switchDict(dict.id);
+                        }
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? colorScheme.primaryContainer.withValues(alpha: 0.35)
+                              : colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: isSelected
+                                ? colorScheme.primary
+                                : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                            width: isSelected ? 1.8 : 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? colorScheme.primary
+                                    : colorScheme.surfaceContainerHigh,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(
+                                dict.icon,
+                                color: isSelected ? colorScheme.onPrimary : colorScheme.onSurfaceVariant,
+                                size: 22,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Text(
+                                        dict.name,
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold,
+                                          color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: colorScheme.secondaryContainer.withValues(alpha: 0.5),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          '约 ${dict.estimatedCount} 词',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: colorScheme.onSecondaryContainer,
+                                          ),
+                                        ),
+                                      ),
+                                      if (dict.isCustom) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: colorScheme.tertiaryContainer.withValues(alpha: 0.6),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            '自定义',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: colorScheme.onTertiaryContainer,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    dict.description,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            if (isSelected)
+                              Icon(Icons.check_circle_rounded, color: colorScheme.primary, size: 22)
+                            else
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                                size: 20,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                showDialog(
+                  context: context,
+                  builder: (_) => CustomDictDialog(controller: _controller),
+                );
+              },
+              icon: const Icon(Icons.library_add_rounded, size: 16),
+              label: const Text('管理与导入词库...'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 
@@ -1094,7 +1306,13 @@ class _FsrsMemoryDialogState extends State<_FsrsMemoryDialog> {
             children: [
               Icon(Icons.psychology_rounded, color: colorScheme.primary),
               const SizedBox(width: 8),
-              const Text('FSRS 错题与记忆库', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Expanded(
+                child: Text(
+                  '${widget.controller.currentDict.name} · 错题与记忆库',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -1121,7 +1339,9 @@ class _FsrsMemoryDialogState extends State<_FsrsMemoryDialog> {
         child: filteredCards.isEmpty
             ? Center(
                 child: Text(
-                  allCards.isEmpty ? '目前尚未记录复习词条，多刷几道题吧！' : '该分类下暂无词条',
+                  allCards.isEmpty
+                      ? '「${widget.controller.currentDict.name}」目前尚未记录复习词条，多刷几道题吧！'
+                      : '该分类下暂无词条',
                   style: TextStyle(color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6)),
                 ),
               )

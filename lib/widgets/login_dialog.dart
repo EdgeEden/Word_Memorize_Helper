@@ -159,16 +159,25 @@ class _LoginDialogState extends State<LoginDialog> {
                 const SizedBox(height: 20),
 
                 // Username input field
+                Text(
+                  '用户名称 (Username)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 6),
                 TextField(
                   controller: _usernameController,
                   focusNode: _usernameFocusNode,
                   decoration: InputDecoration(
-                    labelText: '用户名称 (Username)',
-                    floatingLabelBehavior: FloatingLabelBehavior.always,
                     hintText: '如: alex, study_2026',
                     prefixIcon: const Icon(Icons.person_outline_rounded),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                     errorText: _errorMessage,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                   ),
                   onSubmitted: (_) => _handleLogin(),
                 ),
@@ -246,16 +255,25 @@ class _LoginDialogState extends State<LoginDialog> {
 
                 if (_showServerConfig) ...[
                   const SizedBox(height: 10),
+                  Text(
+                    '后端 API 地址',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
                   TextField(
                     controller: _serverController,
                     decoration: InputDecoration(
-                      labelText: '后端 API 地址',
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
                       hintText: 'http://127.0.0.1:8000',
                       prefixIcon: const Icon(Icons.dns_outlined, size: 20),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                       helperText: 'Windows/Web 默认 127.0.0.1:8000，Android 模拟器 10.0.2.2:8000',
                       helperMaxLines: 2,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                     ),
                   ),
                 ],

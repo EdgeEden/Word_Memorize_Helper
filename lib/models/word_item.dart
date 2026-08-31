@@ -13,13 +13,25 @@ class WordItem {
     required this.exampleCn,
   });
 
-  /// Factory constructor to create WordItem from CSV row list
+  /// Factory constructor to create WordItem from CSV row list (supports 2 to 5+ columns)
   factory WordItem.fromCsvRow(List<dynamic> row) {
     String getCol(int index) {
       if (index < row.length) {
         return row[index]?.toString().trim() ?? '';
       }
       return '';
+    }
+
+    final colCount = row.length;
+    if (colCount == 2) {
+      // 2 columns: [word, definition]
+      return WordItem(
+        word: getCol(0),
+        phonetic: '',
+        definition: getCol(1),
+        exampleEn: '',
+        exampleCn: '',
+      );
     }
 
     return WordItem(

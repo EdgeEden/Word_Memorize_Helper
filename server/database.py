@@ -23,25 +23,65 @@ def init_db():
                 last_active TEXT NOT NULL
             );
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS cards (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                word TEXT NOT NULL,
-                state INTEGER NOT NULL,
-                stability REAL NOT NULL,
-                difficulty REAL NOT NULL,
-                reps INTEGER NOT NULL,
-                lapses INTEGER NOT NULL,
-                consecutive_correct INTEGER NOT NULL,
-                last_review TEXT,
-                due TEXT,
-                due_step INTEGER NOT NULL DEFAULT -1,
-                updated_at TEXT NOT NULL,
-                UNIQUE(username, word)
-            );
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_cards_user ON cards(username);")
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cards'")
+        table_exists = cur.fetchone() is not None
+        if not table_exists:
+            conn.execute("""
+                CREATE TABLE cards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    dict_id TEXT NOT NULL DEFAULT 'kaoyan4533',
+                    word TEXT NOT NULL,
+                    state INTEGER NOT NULL,
+                    stability REAL NOT NULL,
+                    difficulty REAL NOT NULL,
+                    reps INTEGER NOT NULL,
+                    lapses INTEGER NOT NULL,
+                    consecutive_correct INTEGER NOT NULL,
+                    last_review TEXT,
+                    due TEXT,
+                    due_step INTEGER NOT NULL DEFAULT -1,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(username, dict_id, word)
+                );
+            """)
+        else:
+            cols = [row["name"] for row in cur.execute("PRAGMA table_info(cards)").fetchall()]
+            if "dict_id" not in cols:
+                # Migrate existing table to multi-dict schema
+                conn.execute("""
+                    CREATE TABLE cards_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT NOT NULL,
+                        dict_id TEXT NOT NULL DEFAULT 'kaoyan4533',
+                        word TEXT NOT NULL,
+                        state INTEGER NOT NULL,
+                        stability REAL NOT NULL,
+                        difficulty REAL NOT NULL,
+                        reps INTEGER NOT NULL,
+                        lapses INTEGER NOT NULL,
+                        consecutive_correct INTEGER NOT NULL,
+                        last_review TEXT,
+                        due TEXT,
+                        due_step INTEGER NOT NULL DEFAULT -1,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(username, dict_id, word)
+                    );
+                """)
+                conn.execute("""
+                    INSERT INTO cards_new (
+                        id, username, dict_id, word, state, stability, difficulty,
+                        reps, lapses, consecutive_correct, last_review, due, due_step, updated_at
+                    )
+                    SELECT 
+                        id, username, 'kaoyan4533', word, state, stability, difficulty,
+                        reps, lapses, consecutive_correct, last_review, due, due_step, updated_at
+                    FROM cards;
+                """)
+                conn.execute("DROP TABLE cards;")
+                conn.execute("ALTER TABLE cards_new RENAME TO cards;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cards_user_dict ON cards(username, dict_id);")
     conn.close()
 
 def login_or_register_user(username: str) -> Dict[str, Any]:
@@ -71,12 +111,13 @@ def login_or_register_user(username: str) -> Dict[str, Any]:
     finally:
         conn.close()
 
-def get_user_cards(username: str) -> Dict[str, Dict[str, Any]]:
+def get_user_cards(username: str, dict_id: str = "kaoyan4533") -> Dict[str, Dict[str, Any]]:
     username = username.strip().lower()
+    dict_id = dict_id.strip().lower() if dict_id else "kaoyan4533"
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM cards WHERE username = ?", (username,))
+        cursor.execute("SELECT * FROM cards WHERE username = ? AND dict_id = ?", (username, dict_id))
         rows = cursor.fetchall()
         cards: Dict[str, Dict[str, Any]] = {}
         for row in rows:
@@ -96,8 +137,9 @@ def get_user_cards(username: str) -> Dict[str, Dict[str, Any]]:
     finally:
         conn.close()
 
-def upsert_user_cards(username: str, cards: Dict[str, Dict[str, Any]]) -> int:
+def upsert_user_cards(username: str, cards: Dict[str, Dict[str, Any]], dict_id: str = "kaoyan4533") -> int:
     username = username.strip().lower()
+    dict_id = dict_id.strip().lower() if dict_id else "kaoyan4533"
     now_str = datetime.utcnow().isoformat()
     conn = get_connection()
     saved_count = 0
@@ -120,10 +162,10 @@ def upsert_user_cards(username: str, cards: Dict[str, Dict[str, Any]]) -> int:
 
                 cursor.execute("""
                     INSERT INTO cards (
-                        username, word, state, stability, difficulty, reps, lapses,
+                        username, dict_id, word, state, stability, difficulty, reps, lapses,
                         consecutive_correct, last_review, due, due_step, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(username, word) DO UPDATE SET
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(username, dict_id, word) DO UPDATE SET
                         state = excluded.state,
                         stability = excluded.stability,
                         difficulty = excluded.difficulty,
@@ -135,11 +177,27 @@ def upsert_user_cards(username: str, cards: Dict[str, Dict[str, Any]]) -> int:
                         due_step = excluded.due_step,
                         updated_at = excluded.updated_at;
                 """, (
-                    username, w, state, stability, difficulty, reps, lapses,
+                    username, dict_id, w, state, stability, difficulty, reps, lapses,
                     consecutive_correct, last_review, due, due_step, now_str
                 ))
                 saved_count += 1
         return saved_count
     finally:
         conn.close()
+
+def delete_user_cards(username: str, dict_id: Optional[str] = None) -> int:
+    username = username.strip().lower()
+    conn = get_connection()
+    try:
+        with conn:
+            cursor = conn.cursor()
+            if dict_id and dict_id.strip().lower() != "all":
+                clean_dict = dict_id.strip().lower()
+                cursor.execute("DELETE FROM cards WHERE username = ? AND dict_id = ?", (username, clean_dict))
+            else:
+                cursor.execute("DELETE FROM cards WHERE username = ?", (username,))
+            return cursor.rowcount
+    finally:
+        conn.close()
+
 

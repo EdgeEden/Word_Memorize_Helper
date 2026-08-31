@@ -3,12 +3,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/fsrs/fsrs_models.dart';
 import 'ai_service.dart';
 import 'api_service.dart';
+import 'dict_service.dart';
 
 class FsrsRepository {
   static const String _defaultStorageKey = 'wordn_fsrs_cards_v1';
   static const String _currentUserKey = 'wordn_current_user';
   static const String _userHistoryKey = 'wordn_user_history_list';
   static const String _serverUrlKey = 'wordn_server_url';
+  static const String _currentDictKey = 'wordn_current_dict_id';
 
   // Evaluation & Settings Keys
   static const String _evalModeKey = 'wordn_eval_mode';
@@ -18,11 +20,25 @@ class FsrsRepository {
   static const String _themeModeKey = 'wordn_theme_mode';
 
 
-  static String _getKeyForUser(String? username) {
+  static String _getKeyForUser(String? username, [String dictId = 'kaoyan4533']) {
+    final cleanDict = dictId.trim().toLowerCase().isEmpty ? 'kaoyan4533' : dictId.trim().toLowerCase();
     if (username == null || username.trim().isEmpty) {
-      return _defaultStorageKey;
+      return 'wordn_cards_guest_$cleanDict';
     }
-    return 'wordn_cards_${username.trim().toLowerCase()}';
+    return 'wordn_cards_${username.trim().toLowerCase()}_$cleanDict';
+  }
+
+  /// Get currently selected dictionary ID (defaults to 'kaoyan4533')
+  static Future<String> getCurrentDictId([String defaultId = 'kaoyan4533']) async {
+    final prefs = await SharedPreferences.getInstance();
+    final dictId = prefs.getString(_currentDictKey);
+    return (dictId != null && dictId.trim().isNotEmpty) ? dictId.trim() : defaultId;
+  }
+
+  /// Persist selected dictionary ID
+  static Future<void> setCurrentDictId(String dictId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_currentDictKey, dictId.trim());
   }
 
   /// Get the currently logged-in username (persisted across Android, Windows, and Web)
@@ -162,12 +178,95 @@ class FsrsRepository {
     await prefs.setString(_themeModeKey, mode);
   }
 
-  /// Loads all stored FSRS cards from local storage for the specified user
-  static Future<Map<String, FsrsCard>> loadCards([String? username]) async {
+  /// Inspects all keys in SharedPreferences.
+  /// Removes legacy unlabelled card stores (e.g. wordn_fsrs_cards_v1, `wordn_cards_<username>` without dictId),
+  /// and validates/sanitizes all multi-dict card JSON structures.
+  static Future<void> cleanLegacyAndInvalidCards() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final key = _getKeyForUser(username);
+      final allKeys = prefs.getKeys();
+
+      // Dynamically retrieve all registered dictionary IDs (built-in + custom)
+      final allDicts = await DictService.loadAllDicts();
+      final validDictIds = allDicts.map((d) => d.id.toLowerCase()).toSet();
+
+      for (final key in allKeys) {
+        // 1. Remove legacy unlabelled default key
+        if (key == _defaultStorageKey) {
+          await prefs.remove(key);
+          continue;
+        }
+
+        // 2. Check card storage keys: pattern wordn_cards_<user>_<dictId>
+        if (key.startsWith('wordn_cards_')) {
+          // Check if key ends with one of the valid dict IDs
+          final hasValidDict = validDictIds.any((dictId) => key.endsWith('_$dictId'));
+          if (!hasValidDict) {
+            // This is an unlabelled legacy card key (e.g. wordn_cards_alex) -> Delete it!
+            await prefs.remove(key);
+            continue;
+          }
+
+          // 3. For keys with valid dict suffix, inspect and validate JSON data structure
+          final raw = prefs.getString(key);
+          if (raw == null || raw.trim().isEmpty) {
+            await prefs.remove(key);
+            continue;
+          }
+
+          try {
+            final decoded = jsonDecode(raw);
+            if (decoded is! Map<String, dynamic>) {
+              // Corrupted / non-map root structure -> remove
+              await prefs.remove(key);
+              continue;
+            }
+
+            final Map<String, dynamic> validCardsMap = {};
+            bool modified = false;
+
+            decoded.forEach((wordKey, cardData) {
+              if (cardData is Map<String, dynamic>) {
+                try {
+                  // Validate that FsrsCard.fromJson succeeds and has valid word
+                  final card = FsrsCard.fromJson(cardData);
+                  if (card.word.trim().isNotEmpty) {
+                    validCardsMap[card.word.toLowerCase()] = card.toJson();
+                  } else {
+                    modified = true;
+                  }
+                } catch (_) {
+                  modified = true; // Invalid card structure discarded
+                }
+              } else {
+                modified = true;
+              }
+            });
+
+            if (validCardsMap.isEmpty) {
+              await prefs.remove(key);
+            } else if (modified) {
+              await prefs.setString(key, jsonEncode(validCardsMap));
+            }
+          } catch (_) {
+            // Corrupted JSON -> remove
+            await prefs.remove(key);
+          }
+        }
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('cleanLegacyAndInvalidCards error: $e');
+    }
+  }
+
+  /// Loads all stored FSRS cards from local storage for the specified user and dictionary
+  static Future<Map<String, FsrsCard>> loadCards([String? username, String dictId = 'kaoyan4533']) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = _getKeyForUser(username, dictId);
       final raw = prefs.getString(key);
+
       if (raw == null || raw.isEmpty) return {};
 
       final Map<String, dynamic> decoded = jsonDecode(raw) as Map<String, dynamic>;
@@ -175,7 +274,14 @@ class FsrsRepository {
 
       decoded.forEach((word, value) {
         if (value is Map<String, dynamic>) {
-          result[word] = FsrsCard.fromJson(value);
+          try {
+            final card = FsrsCard.fromJson(value);
+            if (card.word.trim().isNotEmpty) {
+              result[word.toLowerCase()] = card;
+            }
+          } catch (_) {
+            // Skip invalid structure
+          }
         }
       });
 
@@ -187,11 +293,11 @@ class FsrsRepository {
     }
   }
 
-  /// Persists all FSRS cards to local storage for the specified user
-  static Future<void> saveCards(Map<String, FsrsCard> cards, [String? username]) async {
+  /// Persists all FSRS cards to local storage for the specified user and dictionary
+  static Future<void> saveCards(Map<String, FsrsCard> cards, [String? username, String dictId = 'kaoyan4533']) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final key = _getKeyForUser(username);
+      final key = _getKeyForUser(username, dictId);
       final Map<String, dynamic> mapToSave = {};
       cards.forEach((word, card) {
         mapToSave[word] = card.toJson();
@@ -205,10 +311,28 @@ class FsrsRepository {
     }
   }
 
-  /// Clears stored cards for a user
-  static Future<void> clearAll([String? username]) async {
+  /// Clears stored cards for a user and dictionary from local storage
+  /// If [dictId] is null or 'all', clears all dictionaries for this user (or guest)
+  static Future<void> clearCards([String? username, String? dictId]) async {
     final prefs = await SharedPreferences.getInstance();
-    final key = _getKeyForUser(username);
-    await prefs.remove(key);
+    if (dictId != null && dictId.trim().isNotEmpty && dictId.trim().toLowerCase() != 'all') {
+      final key = _getKeyForUser(username, dictId);
+      await prefs.remove(key);
+    } else {
+      final allKeys = prefs.getKeys();
+      final prefix = (username == null || username.trim().isEmpty)
+          ? 'wordn_cards_guest_'
+          : 'wordn_cards_${username.trim().toLowerCase()}_';
+      for (final key in allKeys) {
+        if (key.startsWith(prefix) || key == _defaultStorageKey) {
+          await prefs.remove(key);
+        }
+      }
+    }
+  }
+
+  /// Clears stored cards for a user and dictionary
+  static Future<void> clearAll([String? username, String dictId = 'kaoyan4533']) async {
+    await clearCards(username, dictId);
   }
 }

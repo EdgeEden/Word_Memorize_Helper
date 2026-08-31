@@ -41,6 +41,8 @@ dependencies:
   ota_update: ^7.1.0
   package_info_plus: ^8.2.0
   url_launcher: ^6.3.1
+  file_picker: ^8.1.7
+  path_provider: ^2.1.5
 
 
 dev_dependencies:

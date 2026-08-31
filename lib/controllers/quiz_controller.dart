@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import '../models/dict_info.dart';
 import '../models/fsrs/fsrs_models.dart';
 import '../models/fsrs/fsrs_scheduler.dart';
 import '../models/word_item.dart';
@@ -30,6 +31,7 @@ class QuizController extends ChangeNotifier {
   final FsrsScheduler _fsrsScheduler = FsrsScheduler();
   int _sessionStepCounter = 0;
 
+  String _currentDictId = DictService.defaultDictId;
   WordItem? _currentWord;
   bool _isCurrentWordReview = false;
   bool _isLoading = true;
@@ -60,11 +62,16 @@ class QuizController extends ChangeNotifier {
   String? _evaluationNotice;
 
 
+  List<DictInfo> _availableDicts = [...DictService.builtInDicts];
+
   final Random _random = Random();
 
   // Getters
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  String get currentDictId => _currentDictId;
+  DictInfo get currentDict => DictService.getDictInfo(_currentDictId, _availableDicts);
+  List<DictInfo> get availableDicts => _availableDicts;
   WordItem? get currentWord => _currentWord;
   bool get isCurrentWordReview => _isCurrentWordReview;
   bool get isSubmitted => _isSubmitted;
@@ -104,34 +111,48 @@ class QuizController extends ChangeNotifier {
   UpdateCheckResult? get lastUpdateCheckResult => _lastUpdateCheckResult;
 
 
-  // FSRS Metrics
-  List<FsrsCard> get allCards => _fsrsCards.values.toList();
+  // FSRS Metrics (Strictly filtered to active dictionary)
+  List<FsrsCard> get allCards =>
+      _fsrsCards.values.where((c) => _wordLookup.containsKey(c.word.toLowerCase())).toList();
 
   FsrsCard? get currentCard =>
       _currentWord == null ? null : _fsrsCards[_currentWord!.word.toLowerCase()];
 
-  /// Number of cards due for review right now
+  /// Number of cards due for review right now in active dictionary
   int get dueReviewCount {
     final now = DateTime.now();
-    return _fsrsCards.values.where((card) => card.isDue(now, _sessionStepCounter)).length;
+    return _fsrsCards.values.where((card) {
+      if (!_wordLookup.containsKey(card.word.toLowerCase())) return false;
+      return card.isDue(now, _sessionStepCounter);
+    }).length;
   }
 
   /// 🔴 顽固高危词数量
   int get criticalCount =>
-      _fsrsCards.values.where((c) => c.category == MemoryCategory.critical).length;
+      allCards.where((c) => c.category == MemoryCategory.critical).length;
 
   /// 🟡 巩固进行中数量
   int get consolidatingCount =>
-      _fsrsCards.values.where((c) => c.category == MemoryCategory.consolidating).length;
+      allCards.where((c) => c.category == MemoryCategory.consolidating).length;
 
   /// 🟢 趋于掌握/已毕业数量
   int get masteredCount =>
-      _fsrsCards.values.where((c) => c.category == MemoryCategory.mastered).length;
+      allCards.where((c) => c.category == MemoryCategory.mastered).length;
 
-  /// Total tracked cards in FSRS
-  int get totalTrackedCardsCount => _fsrsCards.length;
+  /// Total tracked cards in FSRS for active dictionary
+  int get totalTrackedCardsCount => allCards.length;
 
   WordItem? getWordItem(String word) => _wordLookup[word.toLowerCase()];
+
+  /// Sanitize cards in memory so that only words belonging to the active dictionary are kept
+  void _sanitizeCards() {
+    if (_wordLookup.isEmpty) return;
+    final initialCount = _fsrsCards.length;
+    _fsrsCards.removeWhere((wordKey, _) => !_wordLookup.containsKey(wordKey.toLowerCase()));
+    if (_fsrsCards.length != initialCount) {
+      FsrsRepository.saveCards(_fsrsCards, _currentUsername, _currentDictId);
+    }
+  }
 
   /// Initialize and load vocabulary, user session & saved FSRS cards
   Future<void> init() async {
@@ -140,7 +161,16 @@ class QuizController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _allWords = await DictService.loadFromAsset();
+      // 1. Clean up any unlabelled legacy stores or corrupted card formats
+      await FsrsRepository.cleanLegacyAndInvalidCards();
+
+      // Load all available dictionaries (built-in + user imported)
+      _availableDicts = await DictService.loadAllDicts();
+
+      _currentDictId = await FsrsRepository.getCurrentDictId();
+      final dictInfo = currentDict;
+      _allWords = await DictService.loadWords(dictInfo);
+      _wordLookup.clear();
       for (final w in _allWords) {
         _wordLookup[w.word.toLowerCase()] = w;
       }
@@ -155,8 +185,9 @@ class QuizController extends ChangeNotifier {
       _deepseekBaseUrl = await FsrsRepository.getDeepSeekBaseUrl();
       _deepseekModel = await FsrsRepository.getDeepSeekModel();
 
-      // Load persisted FSRS memory cards for current user
-      _fsrsCards = await FsrsRepository.loadCards(_currentUsername);
+      // Load persisted FSRS memory cards for current user and current dictionary
+      _fsrsCards = await FsrsRepository.loadCards(_currentUsername, _currentDictId);
+      _sanitizeCards();
 
       if (_allWords.isEmpty) {
         _errorMessage = '词库为空或加载失败';
@@ -176,7 +207,63 @@ class QuizController extends ChangeNotifier {
     }
   }
 
+  /// Switch active dictionary, reload word list and independent FSRS memory state
+  Future<void> switchDict(String newDictId) async {
+    final cleanId = newDictId.trim().toLowerCase();
+    if (cleanId == _currentDictId && _allWords.isNotEmpty) return;
 
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      // 1. Persist current cards before switching
+      await FsrsRepository.saveCards(_fsrsCards, _currentUsername, _currentDictId);
+
+      // 2. Reload available dicts in case custom dict was added
+      _availableDicts = await DictService.loadAllDicts();
+
+      // 3. Update current dict id and persist
+      _currentDictId = cleanId;
+      await FsrsRepository.setCurrentDictId(_currentDictId);
+
+      // 4. Load words for new dictionary
+      final dictInfo = currentDict;
+      _allWords = await DictService.loadWords(dictInfo);
+      _wordLookup.clear();
+      for (final w in _allWords) {
+        _wordLookup[w.word.toLowerCase()] = w;
+      }
+
+      // 5. Load independent cards for new dictionary and sanitize
+      _fsrsCards = await FsrsRepository.loadCards(_currentUsername, _currentDictId);
+      _sanitizeCards();
+
+      // 5. Reset wrong review mode & pick next word
+      _isWrongReviewMode = false;
+      _isSubmitted = false;
+      _isCorrect = null;
+      _showHint = false;
+      _lastUserInput = '';
+      _evaluationNotice = null;
+
+      if (_allWords.isEmpty) {
+        _errorMessage = '词库为空或加载失败';
+      } else {
+        _pickNextWord();
+      }
+
+      // 6. Pull cloud cards for this dictionary if logged in
+      if (isLoggedIn) {
+        _pullAndMergeCloudCards();
+      }
+    } catch (e) {
+      _errorMessage = '切换词库失败: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
 
   /// Check for software updates from server
   Future<UpdateCheckResult> checkForUpdates({bool isSilent = false}) async {
@@ -232,8 +319,8 @@ class QuizController extends ChangeNotifier {
       _currentUsername = cleanUsername;
       await FsrsRepository.setCurrentUser(cleanUsername);
 
-      // 1. Load local cards for this user first
-      _fsrsCards = await FsrsRepository.loadCards(cleanUsername);
+      // 1. Load local cards for this user first for current dictionary
+      _fsrsCards = await FsrsRepository.loadCards(cleanUsername, _currentDictId);
 
       // 2. Connect to server
       _syncStatus = SyncStatus.syncing;
@@ -242,13 +329,14 @@ class QuizController extends ChangeNotifier {
       final loginResult = await ApiService.loginOrRegister(
         cleanUsername,
         serverUrl: _serverUrl,
+        dictId: _currentDictId,
       );
 
       if (loginResult != null) {
         final serverCards = loginResult['cards'] as Map<String, FsrsCard>? ?? {};
-        // Merge remote cards with local cards
+        // Merge remote cards with local cards (only for active dictionary)
         _mergeCards(serverCards);
-        await FsrsRepository.saveCards(_fsrsCards, cleanUsername);
+        await FsrsRepository.saveCards(_fsrsCards, cleanUsername, _currentDictId);
         _syncStatus = SyncStatus.synced;
       } else {
         _syncStatus = SyncStatus.offline;
@@ -270,7 +358,8 @@ class QuizController extends ChangeNotifier {
   Future<void> logout() async {
     _currentUsername = null;
     await FsrsRepository.setCurrentUser(null);
-    _fsrsCards = {};
+    _fsrsCards = await FsrsRepository.loadCards(null, _currentDictId);
+    _sanitizeCards();
     _pickNextWord();
     notifyListeners();
   }
@@ -292,11 +381,11 @@ class QuizController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final remoteCards = await ApiService.fetchCards(_currentUsername!, serverUrl: _serverUrl);
+      final remoteCards = await ApiService.fetchCards(_currentUsername!, serverUrl: _serverUrl, dictId: _currentDictId);
       if (remoteCards != null) {
         _mergeCards(remoteCards);
-        await FsrsRepository.saveCards(_fsrsCards, _currentUsername);
-        final pushSuccess = await ApiService.syncCards(_currentUsername!, _fsrsCards, serverUrl: _serverUrl);
+        await FsrsRepository.saveCards(_fsrsCards, _currentUsername, _currentDictId);
+        final pushSuccess = await ApiService.syncCards(_currentUsername!, _fsrsCards, serverUrl: _serverUrl, dictId: _currentDictId);
         _syncStatus = pushSuccess ? SyncStatus.synced : SyncStatus.failed;
       } else {
         _syncStatus = SyncStatus.offline;
@@ -308,20 +397,24 @@ class QuizController extends ChangeNotifier {
     }
   }
 
-  /// Smart Card Merging Algorithm
+  /// Smart Card Merging Algorithm (strictly ensures words belong to active dictionary)
   void _mergeCards(Map<String, FsrsCard> remoteCards) {
     remoteCards.forEach((word, remoteCard) {
-      final localCard = _fsrsCards[word];
+      final key = word.toLowerCase();
+      // Ensure the word belongs to the current dictionary
+      if (!_wordLookup.containsKey(key)) return;
+
+      final localCard = _fsrsCards[key];
       if (localCard == null) {
-        _fsrsCards[word] = remoteCard;
+        _fsrsCards[key] = remoteCard;
       } else {
         // If both exist, take the one with higher reps or later review time
         if (remoteCard.reps > localCard.reps) {
-          _fsrsCards[word] = remoteCard;
+          _fsrsCards[key] = remoteCard;
         } else if (remoteCard.reps == localCard.reps) {
           if (remoteCard.lastReview != null && localCard.lastReview != null) {
             if (remoteCard.lastReview!.isAfter(localCard.lastReview!)) {
-              _fsrsCards[word] = remoteCard;
+              _fsrsCards[key] = remoteCard;
             }
           }
         }
@@ -336,10 +429,10 @@ class QuizController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final remoteCards = await ApiService.fetchCards(_currentUsername!, serverUrl: _serverUrl);
+      final remoteCards = await ApiService.fetchCards(_currentUsername!, serverUrl: _serverUrl, dictId: _currentDictId);
       if (remoteCards != null) {
         _mergeCards(remoteCards);
-        await FsrsRepository.saveCards(_fsrsCards, _currentUsername);
+        await FsrsRepository.saveCards(_fsrsCards, _currentUsername, _currentDictId);
         _syncStatus = SyncStatus.synced;
       } else {
         _syncStatus = SyncStatus.offline;
@@ -354,7 +447,7 @@ class QuizController extends ChangeNotifier {
   /// Asynchronous push sync to server on card change
   void _pushSyncToServer() {
     if (!isLoggedIn) return;
-    ApiService.syncCards(_currentUsername!, _fsrsCards, serverUrl: _serverUrl).then((success) {
+    ApiService.syncCards(_currentUsername!, _fsrsCards, serverUrl: _serverUrl, dictId: _currentDictId).then((success) {
       _syncStatus = success ? SyncStatus.synced : SyncStatus.failed;
       notifyListeners();
     }).catchError((_) {
@@ -482,7 +575,7 @@ class QuizController extends ChangeNotifier {
     _fsrsCards[wordKey] = updatedCard;
 
     // Asynchronously persist updated memory states locally
-    FsrsRepository.saveCards(_fsrsCards, _currentUsername);
+    FsrsRepository.saveCards(_fsrsCards, _currentUsername, _currentDictId);
 
     // Asynchronously push to cloud backend
     _pushSyncToServer();
@@ -498,7 +591,7 @@ class QuizController extends ChangeNotifier {
 
   /// FSRS Intelligent Interleaved Scheduler:
   /// 1. Prioritizes due review items (intrasession step or R <= 0.90)
-  /// 2. If no due review items, pulls fresh words from the 4533 dictionary
+  /// 2. If no due review items, pulls fresh words from the current dictionary
   void _pickNextWord() {
     _isSubmitted = false;
     _isCorrect = null;
@@ -586,8 +679,92 @@ class QuizController extends ChangeNotifier {
   Future<void> resetWordMemory(String word) async {
     final key = word.toLowerCase();
     _fsrsCards.remove(key);
-    await FsrsRepository.saveCards(_fsrsCards, _currentUsername);
+    await FsrsRepository.saveCards(_fsrsCards, _currentUsername, _currentDictId);
     _pushSyncToServer();
+    notifyListeners();
+  }
+
+  /// Clear wrong book & FSRS memory cards for current dictionary or all dictionaries
+  /// [clearAll]: if true, clears all dictionaries; if false, clears only [currentDictId]
+  Future<bool> clearWrongBookData({bool clearAll = false}) async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final targetDictId = clearAll ? null : _currentDictId;
+
+      // 1. Clear local storage
+      await FsrsRepository.clearCards(_currentUsername, targetDictId);
+
+      // 2. Clear in-memory cards for current dict
+      _fsrsCards.clear();
+      _isWrongReviewMode = false;
+
+      // 3. Clear cloud database if logged in
+      if (isLoggedIn) {
+        await ApiService.deleteCards(
+          _currentUsername!,
+          dictId: targetDictId,
+          serverUrl: _serverUrl,
+        );
+      }
+
+      // 4. Refresh word picker
+      _pickNextWord();
+      return true;
+    } catch (e) {
+      debugPrint('clearWrongBookData error: $e');
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Imports a new user custom CSV vocabulary dictionary
+  Future<DictInfo> importCustomDict({
+    required String name,
+    String? description,
+    required String csvContent,
+    bool switchImmediately = true,
+  }) async {
+    final newDict = await DictService.saveCustomDict(
+      name: name,
+      description: description,
+      csvContent: csvContent,
+    );
+    _availableDicts = await DictService.loadAllDicts();
+    if (switchImmediately) {
+      await switchDict(newDict.id);
+    } else {
+      notifyListeners();
+    }
+    return newDict;
+  }
+
+  /// Deletes a custom dictionary and clears associated wrong book cards
+  Future<void> deleteCustomDict(String dictId) async {
+    final cleanId = dictId.trim().toLowerCase();
+    
+    // Clear storage for this dictionary
+    await FsrsRepository.clearCards(_currentUsername, cleanId);
+    if (isLoggedIn) {
+      await ApiService.deleteCards(_currentUsername!, dictId: cleanId, serverUrl: _serverUrl);
+    }
+
+    await DictService.deleteCustomDict(cleanId);
+    _availableDicts = await DictService.loadAllDicts();
+
+    if (_currentDictId.toLowerCase() == cleanId) {
+      await switchDict(DictService.defaultDictId);
+    } else {
+      notifyListeners();
+    }
+  }
+
+  /// Reloads available dicts list
+  Future<void> reloadAvailableDicts() async {
+    _availableDicts = await DictService.loadAllDicts();
     notifyListeners();
   }
 }

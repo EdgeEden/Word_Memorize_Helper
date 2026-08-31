@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=50, description="Unique username")
+    dict_id: str = "kaoyan4533"
 
 class LoginResponse(BaseModel):
     id: int
@@ -13,6 +14,7 @@ class LoginResponse(BaseModel):
 class SyncRequest(BaseModel):
     username: str
     cards: Dict[str, Any]
+    dict_id: str = "kaoyan4533"
 
 class SyncResponse(BaseModel):
     status: str
