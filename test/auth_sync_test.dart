@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wordn/controllers/quiz_controller.dart';
 import 'package:wordn/models/fsrs/fsrs_models.dart';
@@ -9,7 +10,15 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    PackageInfo.setMockInitialValues(
+      appName: 'WordN',
+      packageName: 'com.example.wordn',
+      version: '1.0.0',
+      buildNumber: '1',
+      buildSignature: '',
+    );
   });
+
 
 
   test('FsrsRepository supports multi-user storage and user switching', () async {

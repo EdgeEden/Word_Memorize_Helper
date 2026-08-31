@@ -14,7 +14,9 @@ class FsrsRepository {
   static const String _evalModeKey = 'wordn_eval_mode';
   static const String _deepseekApiKey = 'wordn_deepseek_api_key';
   static const String _deepseekBaseUrlKey = 'wordn_deepseek_base_url';
+  static const String _deepseekModelKey = 'wordn_deepseek_model';
   static const String _themeModeKey = 'wordn_theme_mode';
+
 
   static String _getKeyForUser(String? username) {
     if (username == null || username.trim().isEmpty) {
@@ -129,6 +131,24 @@ class FsrsRepository {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_deepseekBaseUrlKey, baseUrl.trim());
   }
+
+  /// Get stored AI Model ID (empty if not configured)
+  static Future<String> getDeepSeekModel() async {
+    final prefs = await SharedPreferences.getInstance();
+    final model = prefs.getString(_deepseekModelKey);
+    if (model != null && model.trim().isNotEmpty) {
+      return model.trim();
+    }
+    return '';
+  }
+
+
+  /// Save DeepSeek Model ID
+  static Future<void> setDeepSeekModel(String model) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_deepseekModelKey, model.trim());
+  }
+
 
   /// Get theme mode: 'system', 'light', 'dark'
   static Future<String> getThemeMode() async {

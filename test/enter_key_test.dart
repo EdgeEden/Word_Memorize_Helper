@@ -3,12 +3,21 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wordn/main.dart';
 
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({'wordn_current_user': 'tester'});
+    PackageInfo.setMockInitialValues(
+      appName: 'WordN',
+      packageName: 'com.example.wordn',
+      version: '1.0.0',
+      buildNumber: '1',
+      buildSignature: '',
+    );
   });
+
 
 
   testWidgets('Enter key submits answer, and subsequent Enter advances to next word',

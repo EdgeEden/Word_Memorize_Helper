@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../controllers/quiz_controller.dart';
 import '../services/ai_service.dart';
 import '../services/fsrs_repository.dart';
+import '../services/update_service.dart';
+import '../widgets/update_dialog.dart';
 
 /// Unified Settings Dialog for Appearance Theme & Answer Evaluation Methods
 class SettingsDialog extends StatefulWidget {
@@ -42,10 +44,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late final TextEditingController _apiKeyController;
   late final TextEditingController _baseUrlController;
 
+  String _selectedModel = '';
+  List<String> _availableModels = [];
+  bool _isFetchingModels = false;
+  String? _fetchModelsResult;
+  bool? _fetchModelsSuccess;
+
   bool _obscureApiKey = true;
   bool _isTestingApi = false;
   String? _testApiResult;
   bool? _testApiSuccess;
+
+  String _currentAppVersion = '1.0.0';
+  int _currentBuildNumber = 1;
+  bool _isCheckingUpdate = false;
+
+  String _lastApiKeyText = '';
+  String _lastBaseUrlText = '';
 
   @override
   void initState() {
@@ -54,13 +69,98 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _selectedEvalMode = widget.controller.evalMode;
     _apiKeyController = TextEditingController(text: widget.controller.deepseekApiKey);
     _baseUrlController = TextEditingController(text: widget.controller.deepseekBaseUrl);
+
+    final savedKey = widget.controller.deepseekApiKey.trim();
+    final savedModel = widget.controller.deepseekModel.trim();
+    if (savedKey.isNotEmpty && savedModel.isNotEmpty) {
+      _selectedModel = savedModel;
+      _availableModels = [savedModel];
+    } else {
+      _selectedModel = '';
+      _availableModels = [];
+    }
+
+    _lastApiKeyText = _apiKeyController.text;
+    _lastBaseUrlText = _baseUrlController.text;
+    _apiKeyController.addListener(_onApiConfigChanged);
+    _baseUrlController.addListener(_onApiConfigChanged);
+
+    _loadAppVersion();
+  }
+
+  void _onApiConfigChanged() {
+    final currentKey = _apiKeyController.text;
+    final currentBase = _baseUrlController.text;
+    if (currentKey != _lastApiKeyText || currentBase != _lastBaseUrlText) {
+      _lastApiKeyText = currentKey;
+      _lastBaseUrlText = currentBase;
+      if (_selectedModel.isNotEmpty || _availableModels.isNotEmpty || _fetchModelsResult != null) {
+        setState(() {
+          _selectedModel = '';
+          _availableModels = [];
+          _fetchModelsResult = null;
+          _fetchModelsSuccess = null;
+          _testApiResult = null;
+          _testApiSuccess = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadAppVersion() async {
+    final info = await UpdateService.getCurrentAppVersion();
+    if (mounted) {
+      setState(() {
+        _currentAppVersion = info['version'] as String? ?? '1.0.0';
+        _currentBuildNumber = info['buildNumber'] as int? ?? 1;
+      });
+    }
   }
 
   @override
   void dispose() {
+    _apiKeyController.removeListener(_onApiConfigChanged);
+    _baseUrlController.removeListener(_onApiConfigChanged);
     _apiKeyController.dispose();
     _baseUrlController.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchAvailableModels() async {
+    final key = _apiKeyController.text.trim();
+    if (key.isEmpty) {
+      setState(() {
+        _fetchModelsSuccess = false;
+        _fetchModelsResult = '请先输入 API Key 再获取模型列表';
+      });
+      return;
+    }
+
+    setState(() {
+      _isFetchingModels = true;
+      _fetchModelsResult = null;
+      _fetchModelsSuccess = null;
+    });
+
+    final models = await DeepSeekService.fetchAvailableModels(
+      key,
+      baseUrl: _baseUrlController.text.trim(),
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isFetchingModels = false;
+      if (models.isNotEmpty) {
+        _availableModels = models;
+        _selectedModel = models.first; // Default to first in the list
+        _fetchModelsSuccess = true;
+        _fetchModelsResult = '已获取 ${models.length} 个可用模型，已默认选中首项';
+      } else {
+        _fetchModelsSuccess = false;
+        _fetchModelsResult = '未能自动获取到模型，请检查网络或 Base URL';
+      }
+    });
   }
 
   Future<void> _testDeepSeekConnection() async {
@@ -69,6 +169,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
       setState(() {
         _testApiSuccess = false;
         _testApiResult = '请输入 API Key 后再进行连通性测试';
+      });
+      return;
+    }
+
+    if (_selectedModel.trim().isEmpty) {
+      setState(() {
+        _testApiSuccess = false;
+        _testApiResult = '请先获取并选择模型后再测试连通性';
       });
       return;
     }
@@ -82,6 +190,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final res = await DeepSeekService.testConnection(
       key,
       baseUrl: _baseUrlController.text.trim(),
+      model: _selectedModel,
     );
 
     if (!mounted) return;
@@ -93,7 +202,50 @@ class _SettingsDialogState extends State<SettingsDialog> {
     });
   }
 
+  Future<void> _showAlertDialog({required String title, required String message}) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Row(
+          children: [
+            const Icon(Icons.info_outline_rounded, color: Colors.orangeAccent, size: 22),
+            const SizedBox(width: 8),
+            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(message, style: const TextStyle(fontSize: 13, height: 1.5)),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('我知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _handleSave() async {
+    // If AI mode is selected, validate API key and model selection
+    if (_selectedEvalMode == EvaluationMode.deepseekAi) {
+      final key = _apiKeyController.text.trim();
+      if (key.isEmpty) {
+        await _showAlertDialog(
+          title: '请配置 API Key',
+          message: '您选择了 AI 大模型判定模式，但尚未输入 API Key。请先填写 API Key 并获取选择模型。',
+        );
+        return;
+      }
+
+      if (_selectedModel.trim().isEmpty) {
+        await _showAlertDialog(
+          title: '请选择 AI 模型',
+          message: '当前尚未选择要使用的 AI 模型。请点击【获取模型】按钮获取可用模型列表，并选择使用的模型。',
+        );
+        return;
+      }
+    }
+
     // 1. Save Theme
     widget.onThemeChanged(_selectedThemeMode);
     final themeString = _selectedThemeMode == ThemeMode.dark
@@ -108,12 +260,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
     await widget.controller.updateDeepSeekConfig(
       apiKey: _apiKeyController.text.trim(),
       baseUrl: _baseUrlController.text.trim(),
+      model: _selectedModel.trim(),
     );
 
     if (mounted) {
       Navigator.of(context).pop();
     }
   }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -200,7 +355,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ButtonSegment(
                       value: EvaluationMode.deepseekAi,
                       icon: Icon(Icons.auto_awesome_rounded, size: 18),
-                      label: Text('DeepSeek AI 判定'),
+                      label: Text('AI 大模型判定'),
                     ),
                   ],
                   selected: {_selectedEvalMode},
@@ -216,13 +371,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
               Text(
                 _selectedEvalMode == EvaluationMode.localMatcher
                     ? '⚡ 本地词典匹配：通过离线词库分词和关键词包含快速判定，无网络延迟。'
-                    : '🤖 DeepSeek AI 智能判定：调用大模型理解同义词、引申义及多样化中文表述，判定更精准。',
+                    : '🤖 AI 智能判定：调用大模型理解同义词、引申义及多样化中文表述，判定更精准。',
                 style: TextStyle(fontSize: 12, height: 1.4, color: colorScheme.onSurfaceVariant),
               ),
 
-
               // -------------------------------------------------------------
-              // 3. DeepSeek Config Box
+              // 3. AI Config Box
               // -------------------------------------------------------------
               AnimatedCrossFade(
                 firstChild: const SizedBox.shrink(),
@@ -242,7 +396,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           Icon(Icons.key_rounded, size: 16, color: colorScheme.primary),
                           const SizedBox(width: 6),
                           Text(
-                            'DeepSeek API 配置',
+                            'AI API 与模型配置',
                             style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: colorScheme.primary),
                           ),
                         ],
@@ -254,10 +408,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         controller: _apiKeyController,
                         obscureText: _obscureApiKey,
                         decoration: InputDecoration(
-                          labelText: 'DeepSeek API Key',
+                          labelText: 'API Key',
                           floatingLabelBehavior: FloatingLabelBehavior.always,
                           hintText: 'sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
                           prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20),
+
                           suffixIcon: IconButton(
                             icon: Icon(
                               _obscureApiKey ? Icons.visibility_off_outlined : Icons.visibility_outlined,
@@ -289,6 +444,96 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         ),
                       ),
                       const SizedBox(height: 12),
+
+                      // Model Dropdown Selection & Fetch Button
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+
+
+                              key: ValueKey('$_selectedModel-${_availableModels.length}'),
+                              initialValue: _availableModels.contains(_selectedModel) && _selectedModel.isNotEmpty
+                                  ? _selectedModel
+                                  : null,
+                              hint: Text(
+                                _availableModels.isEmpty ? '请先点击右侧按钮获取模型' : '请选择模型',
+                                style: const TextStyle(fontSize: 13, color: Colors.grey),
+                              ),
+                              decoration: InputDecoration(
+                                labelText: '选择使用的 AI 模型',
+                                floatingLabelBehavior: FloatingLabelBehavior.always,
+                                prefixIcon: const Icon(Icons.smart_toy_outlined, size: 20),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                isDense: true,
+                              ),
+
+                              isExpanded: true,
+                              items: _availableModels.map((m) {
+                                return DropdownMenuItem<String>(
+                                  value: m,
+                                  child: Text(
+                                    m,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setState(() {
+                                    _selectedModel = val;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            height: 48,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              onPressed: _isFetchingModels ? null : _fetchAvailableModels,
+                              icon: _isFetchingModels
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.sync_rounded, size: 18),
+                              label: Text(_isFetchingModels ? '获取中' : '获取模型'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_fetchModelsResult != null) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(
+                              _fetchModelsSuccess == true ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+                              size: 14,
+                              color: _fetchModelsSuccess == true ? Colors.green : Colors.orangeAccent,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _fetchModelsResult!,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: _fetchModelsSuccess == true ? Colors.green : Colors.orangeAccent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+
 
                       // Test Connection Button & Status
                       Row(
@@ -338,6 +583,62 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     : CrossFadeState.showFirst,
                 duration: const Duration(milliseconds: 250),
               ),
+
+              const SizedBox(height: 24),
+              const Divider(height: 1),
+              const SizedBox(height: 18),
+
+              // -------------------------------------------------------------
+              // 4. About and App Update
+              // -------------------------------------------------------------
+              _buildSectionTitle(context, Icons.info_outline_rounded, '关于与软件更新'),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'WordN 考研词汇助手',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '当前版本: v$_currentAppVersion (Build $_currentBuildNumber)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: _isCheckingUpdate ? null : _handleManualCheckUpdate,
+                      icon: _isCheckingUpdate
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh_rounded, size: 16),
+                      label: Text(_isCheckingUpdate ? '检查中...' : '检查更新'),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -355,6 +656,42 @@ class _SettingsDialogState extends State<SettingsDialog> {
       ],
     );
   }
+
+  Future<void> _handleManualCheckUpdate() async {
+    setState(() {
+      _isCheckingUpdate = true;
+    });
+
+    final res = await widget.controller.checkForUpdates();
+
+    if (!mounted) return;
+    setState(() {
+      _isCheckingUpdate = false;
+    });
+
+    if (res.hasUpdate && res.latestInfo != null) {
+      UpdateDialog.show(
+        context,
+        info: res.latestInfo!,
+        currentVersion: res.currentVersion,
+      );
+    } else if (res.errorMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.errorMessage!),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已是最新版本 (v${res.currentVersion})，无需更新'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
 
   Widget _buildSectionTitle(BuildContext context, IconData icon, String title) {
     final colorScheme = Theme.of(context).colorScheme;

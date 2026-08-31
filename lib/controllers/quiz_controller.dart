@@ -7,6 +7,8 @@ import '../services/ai_service.dart';
 import '../services/api_service.dart';
 import '../services/dict_service.dart';
 import '../services/fsrs_repository.dart';
+import '../services/update_service.dart';
+
 
 enum SyncStatus {
   synced,  // 🟢 云端已同步
@@ -53,8 +55,10 @@ class QuizController extends ChangeNotifier {
   EvaluationMode _evalMode = EvaluationMode.localMatcher;
   String _deepseekApiKey = '';
   String _deepseekBaseUrl = DeepSeekService.defaultBaseUrl;
+  String _deepseekModel = DeepSeekService.defaultModel;
   bool _isEvaluating = false;
   String? _evaluationNotice;
+
 
   final Random _random = Random();
 
@@ -88,8 +92,17 @@ class QuizController extends ChangeNotifier {
   EvaluationMode get evalMode => _evalMode;
   String get deepseekApiKey => _deepseekApiKey;
   String get deepseekBaseUrl => _deepseekBaseUrl;
+  String get deepseekModel => _deepseekModel;
   bool get isEvaluating => _isEvaluating;
   String? get evaluationNotice => _evaluationNotice;
+
+
+  // App Update State
+  bool _isCheckingUpdate = false;
+  UpdateCheckResult? _lastUpdateCheckResult;
+  bool get isCheckingUpdate => _isCheckingUpdate;
+  UpdateCheckResult? get lastUpdateCheckResult => _lastUpdateCheckResult;
+
 
   // FSRS Metrics
   List<FsrsCard> get allCards => _fsrsCards.values.toList();
@@ -135,11 +148,12 @@ class QuizController extends ChangeNotifier {
       _currentUsername = await FsrsRepository.getCurrentUser();
       _serverUrl = await FsrsRepository.getServerUrl();
 
-      // Load persisted evaluation settings & DeepSeek API Key
+      // Load persisted evaluation settings & DeepSeek API Key and Model
       final modeStr = await FsrsRepository.getEvalMode();
       _evalMode = modeStr == 'deepseek' ? EvaluationMode.deepseekAi : EvaluationMode.localMatcher;
       _deepseekApiKey = await FsrsRepository.getDeepSeekApiKey();
       _deepseekBaseUrl = await FsrsRepository.getDeepSeekBaseUrl();
+      _deepseekModel = await FsrsRepository.getDeepSeekModel();
 
       // Load persisted FSRS memory cards for current user
       _fsrsCards = await FsrsRepository.loadCards(_currentUsername);
@@ -162,6 +176,23 @@ class QuizController extends ChangeNotifier {
     }
   }
 
+
+
+  /// Check for software updates from server
+  Future<UpdateCheckResult> checkForUpdates({bool isSilent = false}) async {
+    if (!isSilent) notifyListeners();
+
+    try {
+      final result = await UpdateService.checkUpdate(serverUrl: _serverUrl);
+      _lastUpdateCheckResult = result;
+      return result;
+    } finally {
+      _isCheckingUpdate = false;
+      notifyListeners();
+    }
+  }
+
+
   /// Set evaluation mode (local vs deepseek)
   Future<void> setEvalMode(EvaluationMode mode) async {
     _evalMode = mode;
@@ -170,21 +201,30 @@ class QuizController extends ChangeNotifier {
   }
 
   /// Update DeepSeek configuration and persist locally
-  Future<void> updateDeepSeekConfig({required String apiKey, String? baseUrl}) async {
+  Future<void> updateDeepSeekConfig({
+    required String apiKey,
+    String? baseUrl,
+    String? model,
+  }) async {
     _deepseekApiKey = apiKey.trim();
     if (baseUrl != null && baseUrl.trim().isNotEmpty) {
       _deepseekBaseUrl = baseUrl.trim();
-      await FsrsRepository.setDeepSeekBaseUrl(_deepseekBaseUrl);
+    } else {
+      _deepseekBaseUrl = DeepSeekService.defaultBaseUrl;
     }
+    _deepseekModel = model?.trim() ?? '';
+
     await FsrsRepository.setDeepSeekApiKey(_deepseekApiKey);
-    notifyListeners();
+    await FsrsRepository.setDeepSeekBaseUrl(_deepseekBaseUrl);
+    await FsrsRepository.setDeepSeekModel(_deepseekModel);
   }
+
+
 
   /// Login or register a user and sync their cloud cards
   Future<bool> login(String username) async {
     final cleanUsername = username.trim().toLowerCase();
     if (cleanUsername.isEmpty) return false;
-
     _isLoading = true;
     notifyListeners();
 
@@ -352,10 +392,13 @@ class QuizController extends ChangeNotifier {
         // Local dictionary matched directly -> instant success, no AI call needed
         isAnswerCorrect = true;
       } else if (_evalMode == EvaluationMode.deepseekAi) {
-        // Step 2: Local match failed and user selected AI mode -> evaluate via DeepSeek API
+        // Step 2: Local match failed and user selected AI mode -> evaluate via AI API
         if (_deepseekApiKey.trim().isEmpty) {
           isAnswerCorrect = false;
-          _evaluationNotice = '本地匹配未通过，且未配置 DeepSeek API Key';
+          _evaluationNotice = '本地匹配未通过，且未配置 AI API Key';
+        } else if (_deepseekModel.trim().isEmpty) {
+          isAnswerCorrect = false;
+          _evaluationNotice = '本地匹配未通过，且未选择 AI 模型';
         } else {
           _isEvaluating = true;
           notifyListeners();
@@ -365,21 +408,31 @@ class QuizController extends ChangeNotifier {
             userInput: _lastUserInput,
             apiKey: _deepseekApiKey,
             baseUrl: _deepseekBaseUrl,
+            model: _deepseekModel,
           );
 
           _isEvaluating = false;
 
+
           if (aiResult != null) {
             isAnswerCorrect = aiResult;
             if (aiResult) {
-              _evaluationNotice = '本地匹配未通过，已由 DeepSeek AI 语义判定为正确';
+              final modelName = _deepseekModel.trim().isNotEmpty
+                  ? _deepseekModel.trim()
+                  : DeepSeekService.defaultModel;
+              _evaluationNotice = '由 $modelName 判定为正确';
             }
           } else {
             isAnswerCorrect = false;
-            _evaluationNotice = '本地匹配未通过，且 DeepSeek 网络连接异常';
-            debugPrint('[QuizController] DeepSeek AI 判定请求未成功返回结果，单词: "${_currentWord!.word}", 输入: "$_lastUserInput"');
+            final modelName = _deepseekModel.trim().isNotEmpty
+                ? _deepseekModel.trim()
+                : DeepSeekService.defaultModel;
+            _evaluationNotice = '本地匹配未通过，且 $modelName 网络连接异常';
+            debugPrint('[QuizController] AI 判定请求未成功返回结果 ($modelName)，单词: "${_currentWord!.word}", 输入: "$_lastUserInput"');
           }
         }
+
+
       } else {
         // Local matcher mode and local match failed
         isAnswerCorrect = false;
@@ -538,3 +591,5 @@ class QuizController extends ChangeNotifier {
     notifyListeners();
   }
 }
+
+

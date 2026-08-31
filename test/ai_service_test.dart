@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wordn/controllers/quiz_controller.dart';
 import 'package:wordn/services/ai_service.dart';
@@ -8,7 +10,15 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    PackageInfo.setMockInitialValues(
+      appName: 'WordN',
+      packageName: 'com.example.wordn',
+      version: '1.0.0',
+      buildNumber: '1',
+      buildSignature: '',
+    );
   });
+
 
   group('DeepSeekService Response Parser Tests', () {
     test('Correctly parses "是" variations as true', () {
@@ -25,12 +35,23 @@ void main() {
       expect(DeepSeekService.parseAiResponse(' 否\n'), isFalse);
     });
 
+    test('Strips <think> tags and parses conclusion correctly', () {
+      expect(DeepSeekService.parseAiResponse('<think>用户输入的是竖直，upright是竖直的...</think>是'), isTrue);
+      expect(DeepSeekService.parseAiResponse('<think>upright代表垂直，输入为苹果...</think>否'), isFalse);
+    });
+
+    test('Falls back to reasoning_content when content is empty', () {
+      expect(DeepSeekService.parseAiResponse('', reasoningContent: '经过分析，竖直符合upright释义，因此判定为：是'), isTrue);
+      expect(DeepSeekService.parseAiResponse('', reasoningContent: '经过分析，苹果不符合upright释义，因此判定为：否'), isFalse);
+    });
+
     test('Returns null on ambiguous or invalid outputs', () {
       expect(DeepSeekService.parseAiResponse(''), isNull);
       expect(DeepSeekService.parseAiResponse('未知内容'), isNull);
       expect(DeepSeekService.parseAiResponse('Hello World'), isNull);
     });
   });
+
 
   group('Evaluation Mode and DeepSeek API Key Persistence', () {
     test('Saves and loads evaluation mode and API key locally for auto-fill', () async {
@@ -40,16 +61,18 @@ void main() {
       expect(controller.evalMode, EvaluationMode.localMatcher);
       expect(controller.deepseekApiKey, isEmpty);
 
-      // 2. Set evaluation mode to DeepSeek and save API key
+      // 2. Set evaluation mode to DeepSeek and save API key & custom model
       await controller.setEvalMode(EvaluationMode.deepseekAi);
       await controller.updateDeepSeekConfig(
         apiKey: 'sk-test-deepseek-key-12345',
         baseUrl: 'https://custom.deepseek.com',
+        model: 'deepseek-reasoner',
       );
 
       expect(controller.evalMode, EvaluationMode.deepseekAi);
       expect(controller.deepseekApiKey, 'sk-test-deepseek-key-12345');
       expect(controller.deepseekBaseUrl, 'https://custom.deepseek.com');
+      expect(controller.deepseekModel, 'deepseek-reasoner');
 
       // 3. Simulate app restart: launch new controller
       final freshController = QuizController();
@@ -59,7 +82,9 @@ void main() {
       expect(freshController.evalMode, EvaluationMode.deepseekAi);
       expect(freshController.deepseekApiKey, 'sk-test-deepseek-key-12345');
       expect(freshController.deepseekBaseUrl, 'https://custom.deepseek.com');
+      expect(freshController.deepseekModel, 'deepseek-reasoner');
     });
+
 
     test('Directly succeeds on local match first even in AI mode', () async {
       final controller = QuizController();
@@ -85,9 +110,24 @@ void main() {
         await controller.submitAnswer('完全不相干的文字xyz');
         expect(controller.isSubmitted, isTrue);
         expect(controller.isCorrect, isFalse);
-        expect(controller.evaluationNotice, contains('未配置 DeepSeek API Key'));
+        expect(controller.evaluationNotice, contains('未配置 AI API Key'));
       }
     });
+
+    test('In AI mode with API key but empty model, reports failure with unselected model notice', () async {
+      final controller = QuizController();
+      await controller.init();
+      await controller.setEvalMode(EvaluationMode.deepseekAi);
+      await controller.updateDeepSeekConfig(apiKey: 'sk-test-123', model: '');
+
+      if (controller.currentWord != null) {
+        await controller.submitAnswer('完全不相干的文字xyz');
+        expect(controller.isSubmitted, isTrue);
+        expect(controller.isCorrect, isFalse);
+        expect(controller.evaluationNotice, contains('未选择 AI 模型'));
+      }
+    });
+
     test('Directly marks empty answer as incorrect without invoking AI or setting notices', () async {
       final controller = QuizController();
       await controller.init();
@@ -102,5 +142,6 @@ void main() {
       }
     });
   });
+
 }
 

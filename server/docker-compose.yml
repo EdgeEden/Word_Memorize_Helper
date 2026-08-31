@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  wordn-server:
+    build: .
+    container_name: wordn-backend
+    restart: always
+    ports:
+      - "25642:25642"
+    volumes:
+      - ./data:/app/data
+      - ./dist:/app/dist
+    environment:
+      - PORT=25642
+

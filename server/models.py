@@ -23,3 +23,15 @@ class HealthResponse(BaseModel):
     status: str
     version: str
 
+class AppVersionResponse(BaseModel):
+    version: str
+    version_code: int
+    min_supported_version_code: int = 1
+    title: str
+    release_notes: str
+    apk_url: str
+    windows_url: str
+    force_update: bool = False
+    pub_date: str
+
+

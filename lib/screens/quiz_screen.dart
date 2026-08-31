@@ -4,6 +4,8 @@ import '../controllers/quiz_controller.dart';
 import '../models/fsrs/fsrs_models.dart';
 import '../widgets/login_dialog.dart';
 import '../widgets/settings_dialog.dart';
+import '../widgets/update_dialog.dart';
+
 
 class QuizScreen extends StatefulWidget {
   final VoidCallback? onToggleTheme;
@@ -50,14 +52,26 @@ class _QuizScreenState extends State<QuizScreen> {
 
   Future<void> _initAppAndCheckLogin() async {
     await _controller.init();
-    if (mounted && !_controller.isLoggedIn) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_controller.isLoggedIn) {
-          LoginDialog.show(context, _controller);
+    if (!mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (!_controller.isLoggedIn) {
+        LoginDialog.show(context, _controller);
+      } else {
+        // If logged in, perform background update check
+        final updateResult = await _controller.checkForUpdates(isSilent: true);
+        if (mounted && updateResult.hasUpdate && updateResult.latestInfo != null) {
+          UpdateDialog.show(
+            context,
+            info: updateResult.latestInfo!,
+            currentVersion: updateResult.currentVersion,
+          );
         }
-      });
-    }
+      }
+    });
   }
+
 
 
   void _onControllerUpdate() {
@@ -703,13 +717,16 @@ class _QuizScreenState extends State<QuizScreen> {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          'DeepSeek 正在智能判定释义...',
+                          '${_controller.deepseekModel.isNotEmpty ? _controller.deepseekModel : "AI"} 正在智能判定释义...',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             color: colorScheme.primary,
                           ),
                         ),
+
+
+
                       ],
                     ),
                   )

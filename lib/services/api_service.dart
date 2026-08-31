@@ -5,17 +5,17 @@ import 'package:http/http.dart' as http;
 import '../models/fsrs/fsrs_models.dart';
 
 class ApiService {
-  static const String _defaultLocalhost = 'http://127.0.0.1:8000';
+  static const String _defaultServer = 'http://127.0.0.1:25642';
 
   static String getDefaultServerUrl() {
-    return _defaultLocalhost;
+    return _defaultServer;
   }
 
   /// Check server connectivity
   static Future<bool> checkHealth(String serverUrl) async {
     try {
       final uri = Uri.parse('$serverUrl/api/health');
-      final response = await http.get(uri).timeout(const Duration(seconds: 2));
+      final response = await http.get(uri).timeout(const Duration(seconds: 5));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return data['status'] == 'ok';
@@ -25,6 +25,7 @@ class ApiService {
       return false;
     }
   }
+
 
   /// Login or register a user on the server and fetch their cloud cards
   static Future<Map<String, dynamic>?> loginOrRegister(
@@ -39,7 +40,7 @@ class ApiService {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'username': username.trim().toLowerCase()}),
           )
-          .timeout(const Duration(seconds: 2));
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -73,7 +74,7 @@ class ApiService {
   }) async {
     try {
       final uri = Uri.parse('$serverUrl/api/cards?username=${Uri.encodeComponent(username.trim().toLowerCase())}');
-      final response = await http.get(uri).timeout(const Duration(seconds: 2));
+      final response = await http.get(uri).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -117,7 +118,8 @@ class ApiService {
               'cards': payloadCards,
             }),
           )
-          .timeout(const Duration(seconds: 2));
+          .timeout(const Duration(seconds: 5));
+
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
