@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:ota_update/ota_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'android_download_service.dart';
 
 /// App version metadata retrieved from server
 class AppVersionInfo {
@@ -156,6 +156,11 @@ class UpdateService {
           latestBuildNumber: latest.versionCode,
         );
 
+        if (hasNew) {
+          currentAvailableUpdate = latest;
+          currentAppVersion = currentVer;
+        }
+
         return UpdateCheckResult(
           hasUpdate: hasNew,
           currentVersion: currentVer,
@@ -182,73 +187,125 @@ class UpdateService {
     }
   }
 
-  /// Execute OTA update on Android
-  static StreamSubscription<OtaEvent>? startAndroidOtaUpdate({
+  // -------------------------------------------------------------
+  // Global Download State Management for Android Background Downloading
+  // -------------------------------------------------------------
+  static AppVersionInfo? currentAvailableUpdate;
+  static String? currentAppVersion;
+  static AppVersionInfo? _currentVersionInfo;
+  static AppVersionInfo? get currentVersionInfo => _currentVersionInfo ?? currentAvailableUpdate;
+  static bool get isCurrentDownloadMandatory => currentVersionInfo?.forceUpdate ?? false;
+
+  static bool _isOtaDownloading = false;
+  static int _currentOtaProgress = 0;
+  static bool _isOtaInstalling = false;
+  static String? _currentOtaError;
+  static String? _currentDownloadingUrl;
+
+  static final ValueNotifier<int> otaProgressNotifier = ValueNotifier<int>(0);
+  static final ValueNotifier<bool> isOtaInstallingNotifier = ValueNotifier<bool>(false);
+  static final ValueNotifier<String?> otaErrorNotifier = ValueNotifier<String?>(null);
+  static final ValueNotifier<bool> isOtaDownloadingNotifier = ValueNotifier<bool>(false);
+
+  static bool get isOtaDownloading => _isOtaDownloading;
+  static int get currentOtaProgress => _currentOtaProgress;
+  static bool get isOtaInstalling => _isOtaInstalling;
+  static String? get currentOtaError => _currentOtaError;
+  static String? get currentDownloadingUrl => _currentDownloadingUrl;
+
+  /// Starts or re-connects to an Android background download stream.
+  /// Powered by Android OS System DownloadManager which guarantees downloading
+  /// continues uninterrupted when switching apps or locking the screen.
+  static Future<void> startAndroidOtaUpdate({
     required String apkUrl,
-    required Function(int progress) onProgress,
-    required Function(String error) onError,
-    required VoidCallback onInstalling,
-  }) {
+    AppVersionInfo? versionInfo,
+    Function(int progress)? onProgress,
+    Function(String error)? onError,
+    VoidCallback? onInstalling,
+  }) async {
+    if (versionInfo != null) {
+      _currentVersionInfo = versionInfo;
+    }
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
-      onError('OTA 在线更新仅支持 Android 原生平台');
-      return null;
+      onError?.call('在线更新仅支持 Android 原生平台');
+      return;
     }
 
-    try {
-      debugPrint('[UpdateService] 开始 Android OTA 升级流程，目标地址: $apkUrl');
-      final stream = OtaUpdate().execute(
-        apkUrl,
-        androidProviderAuthority: 'com.example.wordn.ota_update_provider',
-        destinationFilename: 'WordN_Latest.apk',
-      );
-
-      return stream.listen(
-        (OtaEvent event) {
-          debugPrint('[UpdateService] OTA 状态更新: status=${event.status}, value=${event.value}');
-          switch (event.status) {
-            case OtaStatus.DOWNLOADING:
-              final p = int.tryParse(event.value ?? '0') ?? 0;
-              onProgress(p.clamp(0, 100));
-              break;
-            case OtaStatus.INSTALLING:
-            case OtaStatus.INSTALLATION_DONE:
-              onInstalling();
-              break;
-
-            case OtaStatus.ALREADY_RUNNING_ERROR:
-              onError('更新下载已在后台进行中，请稍候');
-              break;
-            case OtaStatus.PERMISSION_NOT_GRANTED_ERROR:
-              onError('未授予应用安装权限，请在系统设置中允许 WordN 安装未知应用');
-              break;
-            case OtaStatus.INTERNAL_ERROR:
-              onError('更新组件内部异常，请检查存储权限或网络');
-              break;
-            case OtaStatus.DOWNLOAD_ERROR:
-              onError('安装包下载失败，请检查网络连接或服务器地址');
-              break;
-            case OtaStatus.CHECKSUM_ERROR:
-              onError('安装包校验失败，文件可能已损坏');
-              break;
-            case OtaStatus.INSTALLATION_ERROR:
-              onError('安装过程异常，请确认系统已允许安装未知应用');
-              break;
-            case OtaStatus.CANCELED:
-              onError('更新已取消');
-              break;
-
-
-          }
-        },
-        onError: (err) {
-          debugPrint('[UpdateService] OTA Stream 异常: $err');
-          onError('更新下载失败: $err');
-        },
-      );
-    } catch (e) {
-      debugPrint('[UpdateService] 发起 OTA 异常: $e');
-      onError('发起 OTA 更新失败: $e');
-      return null;
+    // If already downloading the same URL, connect to existing progress
+    if (_isOtaDownloading && _currentDownloadingUrl == apkUrl) {
+      debugPrint('[UpdateService] 发现正在进行的后台下载任务，关联监听: $apkUrl (进度: $_currentOtaProgress%)');
+      onProgress?.call(_currentOtaProgress);
+      if (_isOtaInstalling) onInstalling?.call();
+      if (_currentOtaError != null) onError?.call(_currentOtaError!);
+      return;
     }
+
+    // Cancel previous download if URL changed
+    await cancelAndroidOtaUpdate();
+
+    _isOtaDownloading = true;
+    _currentDownloadingUrl = apkUrl;
+    _currentOtaProgress = 0;
+    _isOtaInstalling = false;
+    _currentOtaError = null;
+
+    isOtaDownloadingNotifier.value = true;
+    otaProgressNotifier.value = 0;
+    isOtaInstallingNotifier.value = false;
+    otaErrorNotifier.value = null;
+
+    debugPrint('[UpdateService] 发起 Android DownloadManager 系统级后台下载: $apkUrl');
+
+    await AndroidDownloadService.startDownload(
+      url: apkUrl,
+      fileName: 'WordN_Latest.apk',
+      onProgress: (prog) {
+        debugPrint('[UpdateService] DownloadManager 进度: status=${prog.status}, progress=${prog.progress}%');
+        if (prog.status == AndroidDownloadStatus.downloading ||
+            prog.status == AndroidDownloadStatus.pending ||
+            prog.status == AndroidDownloadStatus.paused) {
+          _currentOtaProgress = prog.progress;
+          otaProgressNotifier.value = prog.progress;
+          onProgress?.call(prog.progress);
+        }
+      },
+      onComplete: () {
+        debugPrint('[UpdateService] DownloadManager 下载完成，准备安装');
+        _isOtaDownloading = false;
+        _isOtaInstalling = true;
+        _currentOtaProgress = 100;
+        otaProgressNotifier.value = 100;
+        isOtaDownloadingNotifier.value = false;
+        isOtaInstallingNotifier.value = true;
+        onInstalling?.call();
+      },
+      onError: (err) {
+        debugPrint('[UpdateService] DownloadManager 下载失败: $err');
+        _handleOtaError(err, onError);
+      },
+    );
+  }
+
+  static void _handleOtaError(String message, Function(String error)? callback) {
+    _isOtaDownloading = false;
+    _currentOtaError = message;
+    isOtaDownloadingNotifier.value = false;
+    otaErrorNotifier.value = message;
+    callback?.call(message);
+  }
+
+  /// Cancels ongoing Android OTA background download
+  static Future<void> cancelAndroidOtaUpdate() async {
+    await AndroidDownloadService.cancelDownload();
+    _isOtaDownloading = false;
+    _currentDownloadingUrl = null;
+    _currentOtaProgress = 0;
+    _isOtaInstalling = false;
+    _currentOtaError = null;
+
+    isOtaDownloadingNotifier.value = false;
+    otaProgressNotifier.value = 0;
+    isOtaInstallingNotifier.value = false;
+    otaErrorNotifier.value = null;
   }
 }

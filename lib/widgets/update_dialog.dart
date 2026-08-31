@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:ota_update/ota_update.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../services/android_download_service.dart';
 import '../services/update_service.dart';
 
 /// Modal dialog that alerts the user about a newly available version
@@ -45,7 +45,13 @@ class UpdateDialog extends StatelessWidget {
     if (isAndroid) {
       // Android: launch OTA update with progress dialog
       Navigator.of(context).pop();
-      OtaDownloadDialog.show(context, apkUrl: info.apkUrl, title: info.title);
+      OtaDownloadDialog.show(
+        context,
+        apkUrl: info.apkUrl,
+        title: info.title,
+        versionInfo: info,
+        currentVersion: currentVersion,
+      );
     } else {
       // Windows or Web: launch external browser download
       final downloadUrl = (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows)
@@ -253,20 +259,37 @@ class UpdateDialog extends StatelessWidget {
 class OtaDownloadDialog extends StatefulWidget {
   final String apkUrl;
   final String title;
+  final AppVersionInfo? versionInfo;
+  final String? currentVersion;
 
   const OtaDownloadDialog({
     super.key,
     required this.apkUrl,
     required this.title,
+    this.versionInfo,
+    this.currentVersion,
   });
 
-  static Future<void> show(BuildContext context, {required String apkUrl, required String title}) {
+  static Future<void> show(
+    BuildContext context, {
+    required String apkUrl,
+    required String title,
+    AppVersionInfo? versionInfo,
+    String? currentVersion,
+  }) {
+    final info = versionInfo ?? UpdateService.currentVersionInfo;
+    final isMandatory = info?.forceUpdate ?? false;
     return showDialog(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: !isMandatory,
       builder: (ctx) => PopScope(
-        canPop: false,
-        child: OtaDownloadDialog(apkUrl: apkUrl, title: title),
+        canPop: !isMandatory,
+        child: OtaDownloadDialog(
+          apkUrl: apkUrl,
+          title: title,
+          versionInfo: info,
+          currentVersion: currentVersion ?? UpdateService.currentAppVersion,
+        ),
       ),
     );
   }
@@ -275,56 +298,161 @@ class OtaDownloadDialog extends StatefulWidget {
   State<OtaDownloadDialog> createState() => _OtaDownloadDialogState();
 }
 
-class _OtaDownloadDialogState extends State<OtaDownloadDialog> {
+class _OtaDownloadDialogState extends State<OtaDownloadDialog> with WidgetsBindingObserver {
   int _progress = 0;
   bool _isInstalling = false;
   String? _errorMessage;
-  StreamSubscription<OtaEvent>? _otaSubscription;
+  Timer? _heartbeatTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    _progress = UpdateService.currentOtaProgress;
+    _isInstalling = UpdateService.isOtaInstalling;
+    _errorMessage = UpdateService.currentOtaError;
+
+    UpdateService.otaProgressNotifier.addListener(_onProgressUpdated);
+    UpdateService.isOtaInstallingNotifier.addListener(_onInstallingUpdated);
+    UpdateService.otaErrorNotifier.addListener(_onErrorUpdated);
+
     _startDownload();
+    _startHeartbeatTimer();
+  }
+
+  void _startHeartbeatTimer() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      _syncProgress();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncProgress();
+    }
+  }
+
+  Future<void> _syncProgress() async {
+    if (!mounted) return;
+    final prog = await AndroidDownloadService.getProgress();
+    if (prog != null && mounted) {
+      setState(() {
+        _progress = prog.progress;
+        if (prog.status == AndroidDownloadStatus.successful) {
+          _isInstalling = true;
+        } else if (prog.status == AndroidDownloadStatus.failed) {
+          _errorMessage = '下载失败 (错误代码: ${prog.reason})';
+        }
+      });
+    }
+  }
+
+  void _onProgressUpdated() {
+    if (mounted) {
+      setState(() {
+        _progress = UpdateService.otaProgressNotifier.value;
+      });
+    }
+  }
+
+  void _onInstallingUpdated() {
+    if (mounted) {
+      setState(() {
+        _isInstalling = UpdateService.isOtaInstallingNotifier.value;
+      });
+    }
+  }
+
+  void _onErrorUpdated() {
+    if (mounted) {
+      setState(() {
+        _errorMessage = UpdateService.otaErrorNotifier.value;
+      });
+    }
   }
 
   void _startDownload() {
     setState(() {
-      _progress = 0;
-      _isInstalling = false;
       _errorMessage = null;
     });
 
-    _otaSubscription?.cancel();
-    _otaSubscription = UpdateService.startAndroidOtaUpdate(
+    UpdateService.startAndroidOtaUpdate(
       apkUrl: widget.apkUrl,
-      onProgress: (p) {
-        if (mounted) {
-          setState(() {
-            _progress = p;
-          });
-        }
-      },
-      onInstalling: () {
-        if (mounted) {
-          setState(() {
-            _isInstalling = true;
-          });
-        }
-      },
-      onError: (err) {
-        if (mounted) {
-          setState(() {
-            _errorMessage = err;
-          });
-        }
-      },
+      versionInfo: widget.versionInfo,
     );
   }
 
   @override
   void dispose() {
-    _otaSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _heartbeatTimer?.cancel();
+    UpdateService.otaProgressNotifier.removeListener(_onProgressUpdated);
+    UpdateService.isOtaInstallingNotifier.removeListener(_onInstallingUpdated);
+    UpdateService.otaErrorNotifier.removeListener(_onErrorUpdated);
     super.dispose();
+  }
+
+  void _handleBackgroundDownload() {
+    final info = widget.versionInfo ?? UpdateService.currentVersionInfo;
+    final isMandatory = info?.forceUpdate ?? false;
+
+    if (isMandatory) {
+      // 强制更新拦截弹窗：告知用户可自由切换应用，等待下载完成后安装新版本，点击确定回到下载窗口，阻止用户进入主界面进行答题
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogCtx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          icon: const Icon(Icons.info_outline_rounded, color: Colors.blueAccent, size: 36),
+          title: const Text('强制更新提示', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          content: const Text(
+            '当前为重要强制更新版本。\n\n在后台下载期间，您可以自由切换到手机其他应用。等待下载完成后将自动提示安装。\n\n点击“确定”返回下载进度窗口。',
+            style: TextStyle(fontSize: 13, height: 1.5),
+          ),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                Navigator.of(dialogCtx).pop(); // 关闭提示窗口，保留在当前 OtaDownloadDialog
+              },
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).pop();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('已转入后台继续下载，下载完成后将自动提示安装'),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _handleCancelDownload() {
+    final info = widget.versionInfo ?? UpdateService.currentVersionInfo;
+    final isMandatory = info?.forceUpdate ?? false;
+
+    UpdateService.cancelAndroidOtaUpdate();
+    Navigator.of(context).pop();
+
+    if (isMandatory && info != null) {
+      // 强制更新时，点击“取消下载”只能回退到新版本介绍窗口，不能进入主界面进行答题
+      UpdateDialog.show(
+        context,
+        info: info,
+        currentVersion: widget.currentVersion ?? UpdateService.currentAppVersion ?? '1.0.0',
+      );
+    }
   }
 
   @override
@@ -385,7 +513,7 @@ class _OtaDownloadDialogState extends State<OtaDownloadDialog> {
                 )
               else ...[
                 Text(
-                  _isInstalling ? '请在手机弹窗中确认完成应用安装' : '请保持网络通畅，下载中请勿关闭应用',
+                  _isInstalling ? '请在系统弹窗中确认完成应用安装' : '支持应用后台继续下载，下载完成后自动提示安装',
                   style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
                   textAlign: TextAlign.center,
                 ),
@@ -443,12 +571,31 @@ class _OtaDownloadDialogState extends State<OtaDownloadDialog> {
                   ],
                 )
               else if (!_isInstalling)
-                TextButton(
-                  onPressed: () {
-                    _otaSubscription?.cancel();
-                    Navigator.of(context).pop();
-                  },
-                  child: const Text('取消下载'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: _handleCancelDownload,
+                        child: const Text('取消下载'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: _handleBackgroundDownload,
+                        icon: const Icon(Icons.arrow_downward_rounded, size: 16),
+                        label: const Text('后台下载'),
+                      ),
+                    ),
+                  ],
                 ),
             ],
           ),
