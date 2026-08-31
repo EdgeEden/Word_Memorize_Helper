@@ -18,19 +18,14 @@ DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
 
 # Current published latest version info
 LATEST_VERSION_CONFIG = {
-    "version": "1.0.2",
-    "version_code": 3,
     "version": "1.0.3",
     "version_code": 4,
     "min_supported_version_code": 1,
-    "title": "WordN v1.0.2 体验升级",
-    "release_notes": "1. 🤖 新增 AI 可用模型列表动态获取与自由下拉选择\n2. 🚀 修复 Android 端 OTA 更新安装器唤起与网络安全配置\n3. ⚡ 启动性能优化与 FSRS 记忆算法稳定性提升",
     "title": "WordN v1.0.3 体验升级",
     "release_notes": "1. 🤖 支持自定义 AI 大模型：可动态拉取可用模型列表，且答题反馈中展示具体判定模型\n2. 🚀 体验与更新优化：修复 Android 端应用内 OTA 升级拉起，并增强模型切换与状态校验",
     "apk_url": "/api/download/apk",
     "windows_url": "/api/download/windows",
     "force_update": False,
-    "pub_date": "2026-08-30T14:40:00Z"
     "pub_date": "2026-08-30T15:45:00Z"
 }
 
