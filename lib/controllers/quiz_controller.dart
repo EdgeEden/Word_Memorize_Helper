@@ -61,6 +61,13 @@ class QuizController extends ChangeNotifier {
   bool _isEvaluating = false;
   String? _evaluationNotice;
 
+  // Token and Cost Statistics State
+  bool _showTokenUsage = true;
+  int? _lastEvaluationTokens;
+  int _sessionTotalTokens = 0;
+  double _sessionTotalCost = 0.0;
+  String _balanceCurrency = 'CNY';
+  double? _previousBalance;
 
   List<DictInfo> _availableDicts = [...DictService.builtInDicts];
 
@@ -102,6 +109,18 @@ class QuizController extends ChangeNotifier {
   String get deepseekModel => _deepseekModel;
   bool get isEvaluating => _isEvaluating;
   String? get evaluationNotice => _evaluationNotice;
+  bool get isAiEvaluationMode => _evalMode == EvaluationMode.deepseekAi;
+
+  // Token and Cost Getters
+  bool get showTokenUsage => _showTokenUsage;
+  int? get lastEvaluationTokens => _lastEvaluationTokens;
+  int get sessionTotalTokens => _sessionTotalTokens;
+  double get sessionTotalCost => _sessionTotalCost;
+  String get balanceCurrency => _balanceCurrency;
+  bool get hasTokenUsage => _lastEvaluationTokens != null || _sessionTotalTokens > 0;
+  bool get isCurrentModelDeepSeek =>
+      _deepseekModel.toLowerCase().contains('deepseek') ||
+      _deepseekBaseUrl.toLowerCase().contains('deepseek.com');
 
 
   // App Update State
@@ -184,6 +203,7 @@ class QuizController extends ChangeNotifier {
       _deepseekApiKey = await FsrsRepository.getDeepSeekApiKey();
       _deepseekBaseUrl = await FsrsRepository.getDeepSeekBaseUrl();
       _deepseekModel = await FsrsRepository.getDeepSeekModel();
+      _showTokenUsage = await FsrsRepository.getShowTokenUsage();
 
       // Load persisted FSRS memory cards for current user and current dictionary
       _fsrsCards = await FsrsRepository.loadCards(_currentUsername, _currentDictId);
@@ -304,6 +324,13 @@ class QuizController extends ChangeNotifier {
     await FsrsRepository.setDeepSeekApiKey(_deepseekApiKey);
     await FsrsRepository.setDeepSeekBaseUrl(_deepseekBaseUrl);
     await FsrsRepository.setDeepSeekModel(_deepseekModel);
+  }
+
+  /// Set whether to show token usage statistics on main screen
+  Future<void> setShowTokenUsage(bool value) async {
+    _showTokenUsage = value;
+    await FsrsRepository.setShowTokenUsage(value);
+    notifyListeners();
   }
 
 
@@ -496,6 +523,19 @@ class QuizController extends ChangeNotifier {
           _isEvaluating = true;
           notifyListeners();
 
+          final isDeepSeek = isCurrentModelDeepSeek;
+          // If DeepSeek model and baseline balance has not been fetched yet, establish it
+          if (isDeepSeek && _previousBalance == null) {
+            final initialBalanceInfo = await DeepSeekService.getUserBalance(
+              apiKey: _deepseekApiKey,
+              baseUrl: _deepseekBaseUrl,
+            );
+            if (initialBalanceInfo != null) {
+              _previousBalance = initialBalanceInfo.totalBalance;
+              _balanceCurrency = initialBalanceInfo.currency;
+            }
+          }
+
           final aiResult = await DeepSeekService.evaluateAnswer(
             word: _currentWord!.word,
             userInput: _lastUserInput,
@@ -506,10 +546,33 @@ class QuizController extends ChangeNotifier {
 
           _isEvaluating = false;
 
+          // Record token usage
+          if (aiResult.totalTokens > 0) {
+            _lastEvaluationTokens = aiResult.totalTokens;
+            _sessionTotalTokens += aiResult.totalTokens;
+          }
 
-          if (aiResult != null) {
-            isAnswerCorrect = aiResult;
-            if (aiResult) {
+          // If DeepSeek model, query user balance to compute consumed amount
+          if (isDeepSeek) {
+            final currentBalanceInfo = await DeepSeekService.getUserBalance(
+              apiKey: _deepseekApiKey,
+              baseUrl: _deepseekBaseUrl,
+            );
+            if (currentBalanceInfo != null) {
+              _balanceCurrency = currentBalanceInfo.currency;
+              if (_previousBalance != null) {
+                final delta = _previousBalance! - currentBalanceInfo.totalBalance;
+                if (delta > 0.000001) {
+                  _sessionTotalCost += delta;
+                }
+              }
+              _previousBalance = currentBalanceInfo.totalBalance;
+            }
+          }
+
+          if (aiResult.isApproved != null) {
+            isAnswerCorrect = aiResult.isApproved!;
+            if (aiResult.isApproved!) {
               final modelName = _deepseekModel.trim().isNotEmpty
                   ? _deepseekModel.trim()
                   : DeepSeekService.defaultModel;

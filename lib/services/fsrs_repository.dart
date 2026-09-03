@@ -18,6 +18,7 @@ class FsrsRepository {
   static const String _deepseekBaseUrlKey = 'wordn_deepseek_base_url';
   static const String _deepseekModelKey = 'wordn_deepseek_model';
   static const String _themeModeKey = 'wordn_theme_mode';
+  static const String _showTokenUsageKey = 'wordn_show_token_usage';
 
 
   static String _getKeyForUser(String? username, [String dictId = 'kaoyan4533']) {
@@ -176,6 +177,18 @@ class FsrsRepository {
   static Future<void> setThemeMode(String mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_themeModeKey, mode);
+  }
+
+  /// Get whether to show token usage statistics on main screen (defaults to true)
+  static Future<bool> getShowTokenUsage() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_showTokenUsageKey) ?? true;
+  }
+
+  /// Save whether to show token usage statistics on main screen
+  static Future<void> setShowTokenUsage(bool show) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showTokenUsageKey, show);
   }
 
   /// Inspects all keys in SharedPreferences.

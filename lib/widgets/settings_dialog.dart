@@ -55,6 +55,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   bool _isTestingApi = false;
   String? _testApiResult;
   bool? _testApiSuccess;
+  bool _showTokenUsage = true;
 
   String _currentAppVersion = '1.0.0';
   int _currentBuildNumber = 1;
@@ -68,6 +69,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     super.initState();
     _selectedThemeMode = widget.currentThemeMode;
     _selectedEvalMode = widget.controller.evalMode;
+    _showTokenUsage = widget.controller.showTokenUsage;
     _apiKeyController = TextEditingController(text: widget.controller.deepseekApiKey);
     _baseUrlController = TextEditingController(text: widget.controller.deepseekBaseUrl);
 
@@ -266,6 +268,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
       baseUrl: _baseUrlController.text.trim(),
       model: _selectedModel.trim(),
     );
+
+    // 4. Save Token Usage Display Option
+    await widget.controller.setShowTokenUsage(_showTokenUsage);
 
     if (mounted) {
       Navigator.of(context).pop();
@@ -591,6 +596,30 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             ],
                           ),
                       ],
+
+                      const SizedBox(height: 12),
+                      Divider(height: 1, color: colorScheme.outlineVariant.withValues(alpha: 0.4)),
+                      const SizedBox(height: 6),
+
+                      // Option: Show Token Usage on Main Screen
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text(
+                          '主界面显示 Token 消耗统计',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          '在主界面下方显示判定 Token 消耗与 DeepSeek 账户消耗金额',
+                          style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                        ),
+                        value: _showTokenUsage,
+                        onChanged: (val) {
+                          setState(() {
+                            _showTokenUsage = val;
+                          });
+                        },
+                      ),
                     ],
                   ),
                 ),

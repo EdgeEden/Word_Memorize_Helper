@@ -375,6 +375,13 @@ class _QuizScreenState extends State<QuizScreen> {
 
                               // Bottom Interactive Action Buttons
                               _buildBottomActions(context),
+
+                              // Token Usage & Cost Statistics Footer (Only enabled when AI evaluation mode is selected)
+                              if (_controller.isAiEvaluationMode && _controller.showTokenUsage) ...[
+                                const SizedBox(height: 14),
+                                _buildTokenUsageFooter(context),
+                                const SizedBox(height: 8),
+                              ],
                             ],
                           ),
                         ),
@@ -1069,6 +1076,37 @@ class _QuizScreenState extends State<QuizScreen> {
 
               ],
             ),
+    );
+  }
+
+  /// Token usage and cost statistics footer (concise, English-only, 2 decimal places for total cost)
+  Widget _buildTokenUsageFooter(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDeepSeek = _controller.isCurrentModelDeepSeek;
+
+    final String text;
+    if (isDeepSeek) {
+      final currencySymbol = _controller.balanceCurrency.toUpperCase() == 'USD' ? '\$' : '¥';
+      final costStr = _controller.sessionTotalCost.toStringAsFixed(2);
+      text = 'Last: ${_controller.lastEvaluationTokens ?? 0} tokens | Total: ${_controller.sessionTotalTokens} tokens ($currencySymbol$costStr)';
+    } else {
+      text = 'Last: ${_controller.lastEvaluationTokens ?? 0} tokens | Total: ${_controller.sessionTotalTokens} tokens';
+    }
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 6.0),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+            fontFamily: 'monospace',
+            letterSpacing: 0.2,
+          ),
+        ),
+      ),
     );
   }
 

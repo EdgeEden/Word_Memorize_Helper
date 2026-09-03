@@ -143,5 +143,112 @@ void main() {
     });
   });
 
+  group('Token Usage & DeepSeek Balance Parsing Tests', () {
+    test('DeepSeekBalanceInfo correctly parses official JSON response', () {
+      final json = {
+        'is_available': true,
+        'balance_infos': [
+          {
+            'currency': 'CNY',
+            'total_balance': '110.55',
+            'granted_balance': '10.00',
+            'topped_up_balance': '100.55',
+          }
+        ]
+      };
+      final info = DeepSeekBalanceInfo.fromJson(json);
+      expect(info.isAvailable, isTrue);
+      expect(info.currency, 'CNY');
+      expect(info.totalBalance, closeTo(110.55, 0.001));
+      expect(info.grantedBalance, closeTo(10.00, 0.001));
+      expect(info.toppedUpBalance, closeTo(100.55, 0.001));
+    });
+
+    test('DeepSeekBalanceInfo handles empty or missing balance_infos gracefully', () {
+      final emptyJson = {'is_available': false};
+      final info = DeepSeekBalanceInfo.fromJson(emptyJson);
+      expect(info.isAvailable, isFalse);
+      expect(info.currency, 'CNY');
+      expect(info.totalBalance, 0.0);
+    });
+
+    test('AiEvaluationResult holds token count fields accurately', () {
+      const result = AiEvaluationResult(
+        isApproved: true,
+        totalTokens: 145,
+        promptTokens: 120,
+        completionTokens: 25,
+      );
+      expect(result.isApproved, isTrue);
+      expect(result.totalTokens, 145);
+      expect(result.promptTokens, 120);
+      expect(result.completionTokens, 25);
+    });
+  });
+
+  group('QuizController Token and Cost Statistics Tests', () {
+    test('Persists and toggles showTokenUsage setting', () async {
+      final controller = QuizController();
+      await controller.init();
+      expect(controller.showTokenUsage, isTrue); // Default true
+
+      await controller.setShowTokenUsage(false);
+      expect(controller.showTokenUsage, isFalse);
+
+      final fresh = QuizController();
+      await fresh.init();
+      expect(fresh.showTokenUsage, isFalse);
+
+      await fresh.setShowTokenUsage(true);
+      expect(fresh.showTokenUsage, isTrue);
+    });
+
+    test('Detects whether active model is DeepSeek', () async {
+      final controller = QuizController();
+      await controller.init();
+
+      await controller.updateDeepSeekConfig(
+        apiKey: 'sk-123',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-chat',
+      );
+      expect(controller.isCurrentModelDeepSeek, isTrue);
+
+      await controller.updateDeepSeekConfig(
+        apiKey: 'sk-123',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o',
+      );
+      expect(controller.isCurrentModelDeepSeek, isFalse);
+    });
+
+    test('Formats footer text without Chinese characters and with 2 decimal places for cost', () {
+      const tokens = 142;
+      const totalTokens = 426;
+      const cost = 0.0123;
+      final costStr = cost.toStringAsFixed(2);
+      final deepSeekText = 'Last: $tokens tokens | Total: $totalTokens tokens (¥$costStr)';
+      expect(deepSeekText, equals('Last: 142 tokens | Total: 426 tokens (¥0.01)'));
+      expect(RegExp(r'[\u4e00-\u9fa5]').hasMatch(deepSeekText), isFalse);
+
+      final nonDeepSeekText = 'Last: $tokens tokens | Total: $totalTokens tokens';
+      expect(nonDeepSeekText, equals('Last: 142 tokens | Total: 426 tokens'));
+      expect(RegExp(r'[\u4e00-\u9fa5]').hasMatch(nonDeepSeekText), isFalse);
+    });
+
+    test('isAiEvaluationMode reflects evalMode correctly', () async {
+      final controller = QuizController();
+      await controller.init();
+      expect(controller.evalMode, EvaluationMode.localMatcher);
+      expect(controller.isAiEvaluationMode, isFalse);
+
+      await controller.setEvalMode(EvaluationMode.deepseekAi);
+      expect(controller.evalMode, EvaluationMode.deepseekAi);
+      expect(controller.isAiEvaluationMode, isTrue);
+
+      await controller.setEvalMode(EvaluationMode.localMatcher);
+      expect(controller.isAiEvaluationMode, isFalse);
+    });
+  });
 }
 

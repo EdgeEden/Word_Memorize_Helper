@@ -3,16 +3,68 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+class AiEvaluationResult {
+  final bool? isApproved;
+  final int totalTokens;
+  final int promptTokens;
+  final int completionTokens;
+
+  const AiEvaluationResult({
+    required this.isApproved,
+    this.totalTokens = 0,
+    this.promptTokens = 0,
+    this.completionTokens = 0,
+  });
+
+  static const AiEvaluationResult failure = AiEvaluationResult(isApproved: null);
+  static const AiEvaluationResult rejected = AiEvaluationResult(isApproved: false);
+}
+
+class DeepSeekBalanceInfo {
+  final bool isAvailable;
+  final String currency;
+  final double totalBalance;
+  final double grantedBalance;
+  final double toppedUpBalance;
+
+  const DeepSeekBalanceInfo({
+    required this.isAvailable,
+    required this.currency,
+    required this.totalBalance,
+    required this.grantedBalance,
+    required this.toppedUpBalance,
+  });
+
+  factory DeepSeekBalanceInfo.fromJson(Map<String, dynamic> json) {
+    final isAvailable = json['is_available'] == true;
+    final infos = json['balance_infos'] as List<dynamic>?;
+    if (infos != null && infos.isNotEmpty) {
+      final first = infos.first as Map<String, dynamic>;
+      return DeepSeekBalanceInfo(
+        isAvailable: isAvailable,
+        currency: first['currency']?.toString() ?? 'CNY',
+        totalBalance: double.tryParse(first['total_balance']?.toString() ?? '0') ?? 0.0,
+        grantedBalance: double.tryParse(first['granted_balance']?.toString() ?? '0') ?? 0.0,
+        toppedUpBalance: double.tryParse(first['topped_up_balance']?.toString() ?? '0') ?? 0.0,
+      );
+    }
+    return DeepSeekBalanceInfo(
+      isAvailable: isAvailable,
+      currency: 'CNY',
+      totalBalance: 0.0,
+      grantedBalance: 0.0,
+      toppedUpBalance: 0.0,
+    );
+  }
+}
+
 class DeepSeekService {
   static const String defaultBaseUrl = 'https://api.deepseek.com';
   static const String defaultModel = 'deepseek-chat';
 
   /// Evaluate user's Chinese definition against the target English word via DeepSeek API
-  /// Returns:
-  /// - `true`: Answer is correct / approved by AI
-  /// - `false`: Answer is incorrect / rejected by AI
-  /// - `null`: Network error, invalid key, or unreachable API (caller should fallback to local)
-  static Future<bool?> evaluateAnswer({
+  /// Returns [AiEvaluationResult] with approval status and token usage metrics.
+  static Future<AiEvaluationResult> evaluateAnswer({
     required String word,
     required String userInput,
     required String apiKey,
@@ -21,16 +73,14 @@ class DeepSeekService {
   }) async {
     final cleanInput = userInput.trim();
     if (cleanInput.isEmpty) {
-      return false;
+      return AiEvaluationResult.rejected;
     }
-
 
     final cleanKey = apiKey.trim();
     if (cleanKey.isEmpty) {
       debugPrint('[DeepSeek API] 未配置 API Key，跳过 AI 判定。');
-      return null;
+      return AiEvaluationResult.failure;
     }
-
 
     final rawBase = (baseUrl != null && baseUrl.trim().isNotEmpty)
         ? baseUrl.trim()
@@ -91,6 +141,19 @@ class DeepSeekService {
       if (response.statusCode == 200) {
         final Map<String, dynamic> data =
             jsonDecode(utf8.decode(response.bodyBytes));
+
+        // Parse token usage from response body
+        // Reference: https://api-docs.deepseek.com/zh-cn/api/create-chat-completion
+        int totalTokens = 0;
+        int promptTokens = 0;
+        int completionTokens = 0;
+        if (data['usage'] is Map) {
+          final usage = data['usage'] as Map;
+          totalTokens = int.tryParse(usage['total_tokens']?.toString() ?? '0') ?? 0;
+          promptTokens = int.tryParse(usage['prompt_tokens']?.toString() ?? '0') ?? 0;
+          completionTokens = int.tryParse(usage['completion_tokens']?.toString() ?? '0') ?? 0;
+        }
+
         final choices = data['choices'] as List<dynamic>?;
         if (choices != null && choices.isNotEmpty) {
           final first = choices.first as Map<String, dynamic>;
@@ -107,7 +170,12 @@ class DeepSeekService {
               '[DeepSeek API Warning] AI 返回了非预期内容: content="$content", reasoning_content="$reasoningContent" (无法解析为 是/否)',
             );
           }
-          return result;
+          return AiEvaluationResult(
+            isApproved: result,
+            totalTokens: totalTokens,
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+          );
         } else {
           debugPrint('[DeepSeek API Error] 响应体 choices 为空: ${response.body}');
         }
@@ -125,7 +193,7 @@ class DeepSeekService {
           '  响应详情: $errorDetail',
         );
       }
-      return null;
+      return AiEvaluationResult.failure;
     } catch (e, stackTrace) {
       debugPrint(
         '❌ [DeepSeek API 请求异常]\n'
@@ -134,7 +202,7 @@ class DeepSeekService {
         '  错误描述: $e\n'
         '  堆栈追踪: $stackTrace',
       );
-      return null;
+      return AiEvaluationResult.failure;
     }
   }
 
@@ -197,6 +265,50 @@ class DeepSeekService {
     }
 
     return [];
+  }
+
+  /// Query account balance from DeepSeek API
+  /// Reference: https://api-docs.deepseek.com/zh-cn/api/get-user-balance
+  static Future<DeepSeekBalanceInfo?> getUserBalance({
+    required String apiKey,
+    String? baseUrl,
+  }) async {
+    final cleanKey = apiKey.trim();
+    if (cleanKey.isEmpty) return null;
+
+    final rawBase = (baseUrl != null && baseUrl.trim().isNotEmpty)
+        ? baseUrl.trim()
+        : defaultBaseUrl;
+    final cleanBase = rawBase.endsWith('/')
+        ? rawBase.substring(0, rawBase.length - 1)
+        : rawBase;
+
+    // DeepSeek balance endpoint is /user/balance (strip /v1 suffix if present)
+    final baseWithoutV1 = cleanBase.replaceAll(RegExp(r'/v1$'), '');
+    final endpoint = '$baseWithoutV1/user/balance';
+
+    try {
+      final uri = Uri.parse(endpoint);
+      final response = await http.get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $cleanKey',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data =
+            jsonDecode(utf8.decode(response.bodyBytes));
+        return DeepSeekBalanceInfo.fromJson(data);
+      } else {
+        debugPrint('[DeepSeek API] 查询余额失败 HTTP ${response.statusCode}: ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      debugPrint('[DeepSeek API] 查询余额异常 ($endpoint): $e');
+      return null;
+    }
   }
 
   /// Parses AI response text to determine true / false
