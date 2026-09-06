@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../controllers/quiz_controller.dart';
 import '../services/ai_service.dart';
+import '../services/audio_service.dart';
 import '../services/fsrs_repository.dart';
 import '../services/update_service.dart';
 import '../widgets/custom_dict_dialog.dart';
@@ -42,6 +43,8 @@ class SettingsDialog extends StatefulWidget {
 class _SettingsDialogState extends State<SettingsDialog> {
   late ThemeMode _selectedThemeMode;
   late EvaluationMode _selectedEvalMode;
+  late AudioSourceType _selectedAudioSource;
+  late AutoPlayMode _selectedAutoPlayMode;
   late final TextEditingController _apiKeyController;
   late final TextEditingController _baseUrlController;
 
@@ -57,9 +60,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
   bool? _testApiSuccess;
   bool _showTokenUsage = true;
 
+  bool _isPlayingAudioPreview = false;
+
   String _currentAppVersion = '1.0.0';
   int _currentBuildNumber = 1;
   bool _isCheckingUpdate = false;
+  String? _checkUpdateResult;
+  bool? _checkUpdateSuccess;
 
   String _lastApiKeyText = '';
   String _lastBaseUrlText = '';
@@ -70,6 +77,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _selectedThemeMode = widget.currentThemeMode;
     _selectedEvalMode = widget.controller.evalMode;
     _showTokenUsage = widget.controller.showTokenUsage;
+    _selectedAudioSource = widget.controller.audioSource;
+    _selectedAutoPlayMode = widget.controller.autoPlayMode;
     _apiKeyController = TextEditingController(text: widget.controller.deepseekApiKey);
     _baseUrlController = TextEditingController(text: widget.controller.deepseekBaseUrl);
 
@@ -272,8 +281,39 @@ class _SettingsDialogState extends State<SettingsDialog> {
     // 4. Save Token Usage Display Option
     await widget.controller.setShowTokenUsage(_showTokenUsage);
 
+    // 5. Save Pronunciation Audio Settings
+    await widget.controller.updateAudioConfig(
+      source: _selectedAudioSource,
+      autoPlay: _selectedAutoPlayMode,
+    );
+
     if (mounted) {
       Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _testPlayAudioPreview() async {
+    setState(() {
+      _isPlayingAudioPreview = true;
+    });
+
+    final sampleWord = widget.controller.currentWord?.word ?? 'pronunciation';
+    await AudioService.playWord(
+      sampleWord,
+      sourceType: _selectedAudioSource,
+      onStateChanged: () {
+        if (mounted) {
+          setState(() {
+            _isPlayingAudioPreview = AudioService.isPlaying;
+          });
+        }
+      },
+    );
+
+    if (mounted) {
+      setState(() {
+        _isPlayingAudioPreview = AudioService.isPlaying;
+      });
     }
   }
 
@@ -602,23 +642,26 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       const SizedBox(height: 6),
 
                       // Option: Show Token Usage on Main Screen
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        title: const Text(
-                          '主界面显示 Token 消耗统计',
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      Material(
+                        color: Colors.transparent,
+                        child: SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          title: const Text(
+                            '主界面显示 Token 消耗统计',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Text(
+                            '在主界面下方显示判定 Token 消耗与 DeepSeek 账户消耗金额',
+                            style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                          ),
+                          value: _showTokenUsage,
+                          onChanged: (val) {
+                            setState(() {
+                              _showTokenUsage = val;
+                            });
+                          },
                         ),
-                        subtitle: Text(
-                          '在主界面下方显示判定 Token 消耗与 DeepSeek 账户消耗金额',
-                          style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
-                        ),
-                        value: _showTokenUsage,
-                        onChanged: (val) {
-                          setState(() {
-                            _showTokenUsage = val;
-                          });
-                        },
                       ),
                     ],
                   ),
@@ -634,7 +677,138 @@ class _SettingsDialogState extends State<SettingsDialog> {
               const SizedBox(height: 18),
 
               // -------------------------------------------------------------
-              // 4. About and App Update
+              // 4. Audio & Pronunciation Settings
+              // -------------------------------------------------------------
+              _buildSectionTitle(context, Icons.volume_up_rounded, '音频与单词发音设置'),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Audio Source Selection
+                    Row(
+                      children: [
+                        Icon(Icons.graphic_eq_rounded, size: 16, color: colorScheme.primary),
+                        const SizedBox(width: 8),
+                        const Text(
+                          '发音音源 API',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<AudioSourceType>(
+                      initialValue: _selectedAudioSource,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        filled: true,
+                        fillColor: colorScheme.surface,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      items: AudioSourceType.values.map((src) {
+                        return DropdownMenuItem(
+                          value: src,
+                          child: Text(
+                            src.label,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() => _selectedAudioSource = val);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _selectedAudioSource.description,
+                      style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                    ),
+
+                    const SizedBox(height: 14),
+                    Divider(height: 1, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                    const SizedBox(height: 14),
+
+                    // Auto-play Policy
+                    Row(
+                      children: [
+                        Icon(Icons.playlist_play_rounded, size: 16, color: colorScheme.primary),
+                        const SizedBox(width: 8),
+                        const Text(
+                          '自动朗读策略',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<AutoPlayMode>(
+                      initialValue: _selectedAutoPlayMode,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        filled: true,
+                        fillColor: colorScheme.surface,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      items: AutoPlayMode.values.map((mode) {
+                        return DropdownMenuItem(
+                          value: mode,
+                          child: Text(
+                            mode.label,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() => _selectedAutoPlayMode = val);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _selectedAutoPlayMode.description,
+                      style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                    ),
+
+                    const SizedBox(height: 14),
+                    // Audio Preview button
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: _isPlayingAudioPreview ? null : _testPlayAudioPreview,
+                        icon: _isPlayingAudioPreview
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.volume_up_rounded, size: 16),
+                        label: Text(_isPlayingAudioPreview ? '播放中...' : '试听发音效果'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 24),
+              const Divider(height: 1),
+              const SizedBox(height: 18),
+
+              // -------------------------------------------------------------
+              // 5. About and App Update
               // -------------------------------------------------------------
               _buildSectionTitle(context, Icons.info_outline_rounded, '关于与软件更新'),
               const SizedBox(height: 12),
@@ -645,42 +819,72 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'WordN 考研词汇助手',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'WordN 考研词汇助手',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                '当前版本: v$_currentAppVersion (Build $_currentBuildNumber)',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 3),
-                          Text(
-                            '当前版本: v$_currentAppVersion (Build $_currentBuildNumber)',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colorScheme.onSurfaceVariant,
+                        ),
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          onPressed: _isCheckingUpdate ? null : _handleManualCheckUpdate,
+                          icon: _isCheckingUpdate
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.refresh_rounded, size: 16),
+                          label: Text(_isCheckingUpdate ? '检查中...' : '检查更新'),
+                        ),
+                      ],
+                    ),
+                    if (_checkUpdateResult != null) ...[
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Icon(
+                            _checkUpdateSuccess == true
+                                ? Icons.check_circle_rounded
+                                : Icons.error_outline_rounded,
+                            size: 14,
+                            color: _checkUpdateSuccess == true ? Colors.green : Colors.redAccent,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _checkUpdateResult!,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: _checkUpdateSuccess == true ? Colors.green : Colors.redAccent,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      onPressed: _isCheckingUpdate ? null : _handleManualCheckUpdate,
-                      icon: _isCheckingUpdate
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.refresh_rounded, size: 16),
-                      label: Text(_isCheckingUpdate ? '检查中...' : '检查更新'),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -716,59 +920,65 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   children: [
                     // Item 1: Custom Dictionary Management
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primaryContainer.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(10),
+                    Material(
+                      color: Colors.transparent,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: colorScheme.primaryContainer.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(Icons.library_add_rounded, size: 20, color: colorScheme.primary),
                         ),
-                        child: Icon(Icons.library_add_rounded, size: 20, color: colorScheme.primary),
-                      ),
-                      title: const Text('自定义词库管理与导入', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                      subtitle: Text(
-                        '导入自定义 CSV 词库文件，支持多端增量同步',
-                        style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
-                      ),
-                      trailing: FilledButton.tonalIcon(
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        title: const Text('自定义词库管理与导入', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        subtitle: Text(
+                          '导入自定义 CSV 词库文件，支持多端增量同步',
+                          style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
                         ),
-                        onPressed: _handleOpenCustomDictManagement,
-                        icon: const Icon(Icons.settings_outlined, size: 16),
-                        label: const Text('管理与导入', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        trailing: FilledButton.tonalIcon(
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          onPressed: _handleOpenCustomDictManagement,
+                          icon: const Icon(Icons.settings_outlined, size: 16),
+                          label: const Text('管理与导入', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        ),
                       ),
                     ),
                     const Divider(height: 20),
 
                     // Item 2: Clear Wrong Book Data
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: colorScheme.errorContainer.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(10),
+                    Material(
+                      color: Colors.transparent,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: colorScheme.errorContainer.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(Icons.delete_sweep_rounded, size: 20, color: colorScheme.error),
                         ),
-                        child: Icon(Icons.delete_sweep_rounded, size: 20, color: colorScheme.error),
-                      ),
-                      title: const Text('清除错题本与复习数据', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                      subtitle: Text(
-                        '重置当前词库或所有词库的 FSRS 记忆曲线与错题记录（同步删除云端）',
-                        style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
-                      ),
-                      trailing: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: colorScheme.error,
-                          side: BorderSide(color: colorScheme.error.withValues(alpha: 0.6)),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        title: const Text('清除错题本与复习数据', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        subtitle: Text(
+                          '重置当前词库或所有词库的 FSRS 记忆曲线与错题记录（同步删除云端）',
+                          style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
                         ),
-                        onPressed: _showClearWrongBookDialog,
-                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
-                        label: const Text('清除数据', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        trailing: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: colorScheme.error,
+                            side: BorderSide(color: colorScheme.error.withValues(alpha: 0.6)),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          onPressed: _showClearWrongBookDialog,
+                          icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                          label: const Text('清除数据', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        ),
                       ),
                     ),
                   ],
@@ -795,6 +1005,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Future<void> _handleManualCheckUpdate() async {
     setState(() {
       _isCheckingUpdate = true;
+      _checkUpdateResult = null;
+      _checkUpdateSuccess = null;
     });
 
     final res = await widget.controller.checkForUpdates();
@@ -811,19 +1023,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
         currentVersion: res.currentVersion,
       );
     } else if (res.errorMessage != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(res.errorMessage!),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      setState(() {
+        _checkUpdateSuccess = false;
+        _checkUpdateResult = res.errorMessage;
+      });
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('已是最新版本 (v${res.currentVersion})，无需更新'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      setState(() {
+        _checkUpdateSuccess = true;
+        _checkUpdateResult = '已是最新版本 (v${res.currentVersion})，无需更新';
+      });
     }
   }
 

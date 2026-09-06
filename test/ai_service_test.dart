@@ -249,6 +249,21 @@ void main() {
       await controller.setEvalMode(EvaluationMode.localMatcher);
       expect(controller.isAiEvaluationMode, isFalse);
     });
+
+    test('Submitting answer automatically closes hint component', () async {
+      final controller = QuizController();
+      await controller.init();
+      expect(controller.showHint, isFalse);
+
+      controller.toggleHint();
+      expect(controller.showHint, isTrue);
+
+      if (controller.currentWord != null) {
+        await controller.submitAnswer('some test answer');
+        expect(controller.isSubmitted, isTrue);
+        expect(controller.showHint, isFalse);
+      }
+    });
   });
 }
 

@@ -6,6 +6,7 @@ import '../models/fsrs/fsrs_scheduler.dart';
 import '../models/word_item.dart';
 import '../services/ai_service.dart';
 import '../services/api_service.dart';
+import '../services/audio_service.dart';
 import '../services/dict_service.dart';
 import '../services/fsrs_repository.dart';
 import '../services/update_service.dart';
@@ -69,6 +70,11 @@ class QuizController extends ChangeNotifier {
   String _balanceCurrency = 'CNY';
   double? _previousBalance;
 
+  // Pronunciation Audio State
+  AudioSourceType _audioSource = AudioSourceType.youdao;
+  AutoPlayMode _autoPlayMode = AutoPlayMode.never;
+  bool _isPlayingAudio = false;
+
   List<DictInfo> _availableDicts = [...DictService.builtInDicts];
 
   final Random _random = Random();
@@ -121,6 +127,11 @@ class QuizController extends ChangeNotifier {
   bool get isCurrentModelDeepSeek =>
       _deepseekModel.toLowerCase().contains('deepseek') ||
       _deepseekBaseUrl.toLowerCase().contains('deepseek.com');
+
+  // Audio Getters
+  AudioSourceType get audioSource => _audioSource;
+  AutoPlayMode get autoPlayMode => _autoPlayMode;
+  bool get isPlayingAudio => _isPlayingAudio;
 
 
   // App Update State
@@ -204,6 +215,8 @@ class QuizController extends ChangeNotifier {
       _deepseekBaseUrl = await FsrsRepository.getDeepSeekBaseUrl();
       _deepseekModel = await FsrsRepository.getDeepSeekModel();
       _showTokenUsage = await FsrsRepository.getShowTokenUsage();
+      _audioSource = AudioSourceType.fromString(await FsrsRepository.getAudioSource());
+      _autoPlayMode = AutoPlayMode.fromString(await FsrsRepository.getAutoPlayMode());
 
       // Load persisted FSRS memory cards for current user and current dictionary
       _fsrsCards = await FsrsRepository.loadCards(_currentUsername, _currentDictId);
@@ -330,6 +343,43 @@ class QuizController extends ChangeNotifier {
   Future<void> setShowTokenUsage(bool value) async {
     _showTokenUsage = value;
     await FsrsRepository.setShowTokenUsage(value);
+    notifyListeners();
+  }
+
+  /// Update audio pronunciation configuration and persist locally
+  Future<void> updateAudioConfig({
+    AudioSourceType? source,
+    AutoPlayMode? autoPlay,
+  }) async {
+    if (source != null) {
+      _audioSource = source;
+      await FsrsRepository.setAudioSource(source.key);
+    }
+    if (autoPlay != null) {
+      _autoPlayMode = autoPlay;
+      await FsrsRepository.setAutoPlayMode(autoPlay.key);
+    }
+    notifyListeners();
+  }
+
+  /// Play pronunciation of the current word (or custom word)
+  Future<void> playCurrentWordPronunciation({String? customWord}) async {
+    final targetWord = customWord ?? _currentWord?.word;
+    if (targetWord == null || targetWord.trim().isEmpty) return;
+
+    _isPlayingAudio = true;
+    notifyListeners();
+
+    await AudioService.playWord(
+      targetWord,
+      sourceType: _audioSource,
+      onStateChanged: () {
+        _isPlayingAudio = AudioService.isPlaying;
+        notifyListeners();
+      },
+    );
+
+    _isPlayingAudio = AudioService.isPlaying;
     notifyListeners();
   }
 
@@ -597,6 +647,7 @@ class QuizController extends ChangeNotifier {
 
     _isSubmitted = true;
     _isCorrect = isAnswerCorrect;
+    _showHint = false;
 
 
     _totalAnswered++;
@@ -642,6 +693,11 @@ class QuizController extends ChangeNotifier {
 
     // Asynchronously push to cloud backend
     _pushSyncToServer();
+
+    // Trigger auto-play on answer page if configured
+    if (_currentWord != null && (_autoPlayMode == AutoPlayMode.always || _autoPlayMode == AutoPlayMode.answerOnly)) {
+      playCurrentWordPronunciation();
+    }
 
     notifyListeners();
   }
@@ -699,6 +755,7 @@ class QuizController extends ChangeNotifier {
       if (matchedWord != null) {
         _currentWord = matchedWord;
         _isCurrentWordReview = true;
+        _handleAutoPlayOnQuestion();
         return;
       }
     }
@@ -718,6 +775,7 @@ class QuizController extends ChangeNotifier {
 
     if (_allWords.length == 1) {
       _currentWord = _allWords.first;
+      _handleAutoPlayOnQuestion();
       return;
     }
 
@@ -729,6 +787,13 @@ class QuizController extends ChangeNotifier {
     } while (next == _currentWord && _allWords.length > 1);
 
     _currentWord = next;
+    _handleAutoPlayOnQuestion();
+  }
+
+  void _handleAutoPlayOnQuestion() {
+    if (_currentWord != null && (_autoPlayMode == AutoPlayMode.always || _autoPlayMode == AutoPlayMode.questionOnly)) {
+      playCurrentWordPronunciation();
+    }
   }
 
   /// Toggle wrong word review mode
@@ -829,6 +894,12 @@ class QuizController extends ChangeNotifier {
   Future<void> reloadAvailableDicts() async {
     _availableDicts = await DictService.loadAllDicts();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    AudioService.stop();
+    super.dispose();
   }
 }
 

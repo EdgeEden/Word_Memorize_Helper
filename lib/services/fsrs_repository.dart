@@ -19,6 +19,8 @@ class FsrsRepository {
   static const String _deepseekModelKey = 'wordn_deepseek_model';
   static const String _themeModeKey = 'wordn_theme_mode';
   static const String _showTokenUsageKey = 'wordn_show_token_usage';
+  static const String _audioSourceKey = 'wordn_audio_source';
+  static const String _autoPlayModeKey = 'wordn_auto_play_mode';
 
 
   static String _getKeyForUser(String? username, [String dictId = 'kaoyan4533']) {
@@ -189,6 +191,30 @@ class FsrsRepository {
   static Future<void> setShowTokenUsage(bool show) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_showTokenUsageKey, show);
+  }
+
+  /// Get pronunciation audio source: 'youdao', 'freeDictionary' (defaults to 'youdao')
+  static Future<String> getAudioSource() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_audioSourceKey) ?? 'youdao';
+  }
+
+  /// Save pronunciation audio source
+  static Future<void> setAudioSource(String source) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_audioSourceKey, source.trim());
+  }
+
+  /// Get auto-play mode: 'never', 'questionOnly', 'answerOnly', 'always' (defaults to 'never')
+  static Future<String> getAutoPlayMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_autoPlayModeKey) ?? 'never';
+  }
+
+  /// Save auto-play mode
+  static Future<void> setAutoPlayMode(String mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_autoPlayModeKey, mode.trim());
   }
 
   /// Inspects all keys in SharedPreferences.

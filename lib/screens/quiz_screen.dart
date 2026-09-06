@@ -651,24 +651,73 @@ class _QuizScreenState extends State<QuizScreen> {
           ),
           const SizedBox(height: 8),
 
-          // 2. Phonetic symbol (if present)
-          if (current.phonetic.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '/ ${current.phonetic} /',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
-                  fontFamily: 'monospace',
+          // 2. Phonetic symbol and Pronunciation Audio Playback Button
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (current.phonetic.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '/ ${current.phonetic} /',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              if (current.phonetic.isNotEmpty) const SizedBox(width: 8),
+              // Pronunciation audio button
+              Tooltip(
+                message: '播放发音 (${_controller.audioSource.label.split(' ').first})',
+                child: InkWell(
+                  onTap: () => _controller.playCurrentWordPronunciation(),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: _controller.isPlayingAudio
+                          ? colorScheme.primaryContainer.withValues(alpha: 0.7)
+                          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _controller.isPlayingAudio
+                            ? colorScheme.primary.withValues(alpha: 0.5)
+                            : colorScheme.outlineVariant.withValues(alpha: 0.3),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _controller.isPlayingAudio ? Icons.volume_up_rounded : Icons.volume_up_outlined,
+                          size: 16,
+                          color: _controller.isPlayingAudio ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '朗读',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: _controller.isPlayingAudio ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
+            ],
+          ),
 
           const SizedBox(height: 24),
 
@@ -903,11 +952,11 @@ class _QuizScreenState extends State<QuizScreen> {
 
           ),
 
-          // 5. Example Sentence Hint Area (ONLY English example, NO Chinese translation)
+          // 5. Example Sentence Hint Area (ONLY English example, NO Chinese translation; closed when answer is displayed)
           AnimatedSize(
             duration: const Duration(milliseconds: 280),
             curve: Curves.easeOutCubic,
-            child: _controller.showHint
+            child: (_controller.showHint && !_controller.isSubmitted)
                 ? Column(
                     children: [
                       const SizedBox(height: 16),

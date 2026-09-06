@@ -283,67 +283,70 @@ class _CustomDictDialogState extends State<CustomDictDialog> {
                       final dict = customDicts[index];
                       final isCurrent = dict.id == widget.controller.currentDictId;
 
-                      return ListTile(
-                        dense: true,
-                        leading: Icon(
-                          Icons.folder_special_rounded,
-                          color: isCurrent ? colorScheme.primary : colorScheme.onSurfaceVariant,
-                          size: 20,
-                        ),
-                        title: Row(
-                          children: [
-                            Text(
-                              dict.name,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: isCurrent ? colorScheme.primary : null,
+                      return Material(
+                        color: Colors.transparent,
+                        child: ListTile(
+                          dense: true,
+                          leading: Icon(
+                            Icons.folder_special_rounded,
+                            color: isCurrent ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                            size: 20,
+                          ),
+                          title: Row(
+                            children: [
+                              Text(
+                                dict.name,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: isCurrent ? colorScheme.primary : null,
+                                ),
                               ),
-                            ),
-                            if (isCurrent) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: colorScheme.primary.withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(4),
+                              if (isCurrent) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.primary.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    '当前使用',
+                                    style: TextStyle(fontSize: 10, color: colorScheme.primary, fontWeight: FontWeight.bold),
+                                  ),
                                 ),
-                                child: Text(
-                                  '当前使用',
-                                  style: TextStyle(fontSize: 10, color: colorScheme.primary, fontWeight: FontWeight.bold),
+                              ],
+                            ],
+                          ),
+                          subtitle: Text(
+                            '${dict.estimatedCount} 词 · ${dict.description}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!isCurrent)
+                                TextButton(
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  onPressed: () async {
+                                    await widget.controller.switchDict(dict.id);
+                                    setState(() {});
+                                  },
+                                  child: const Text('切换', style: TextStyle(fontSize: 12)),
                                 ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.redAccent),
+                                tooltip: '删除词库',
+                                onPressed: () => _confirmDeleteDict(dict),
                               ),
                             ],
-                          ],
-                        ),
-                        subtitle: Text(
-                          '${dict.estimatedCount} 词 · ${dict.description}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (!isCurrent)
-                              TextButton(
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  minimumSize: Size.zero,
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                ),
-                                onPressed: () async {
-                                  await widget.controller.switchDict(dict.id);
-                                  setState(() {});
-                                },
-                                child: const Text('切换', style: TextStyle(fontSize: 12)),
-                              ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.redAccent),
-                              tooltip: '删除词库',
-                              onPressed: () => _confirmDeleteDict(dict),
-                            ),
-                          ],
+                          ),
                         ),
                       );
                     },
