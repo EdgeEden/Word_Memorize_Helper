@@ -60,6 +60,9 @@ class _QuizScreenState extends State<QuizScreen> {
       if (!_controller.isLoggedIn) {
         LoginDialog.show(context, _controller);
       } else {
+        if (!_controller.isSubmitted && !_controller.isEvaluating) {
+          _focusNode.requestFocus();
+        }
         // If logged in, perform background update check
         final updateResult = await _controller.checkForUpdates(isSilent: true);
         if (mounted && updateResult.hasUpdate && updateResult.latestInfo != null) {
@@ -73,28 +76,11 @@ class _QuizScreenState extends State<QuizScreen> {
     });
   }
 
-
-
   void _onControllerUpdate() {
     if (mounted) {
-      if (!_controller.isSubmitted && !_controller.isEvaluating) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && !_controller.isSubmitted && !_controller.isEvaluating) {
-            _focusNode.requestFocus();
-          }
-        });
-      } else if (_controller.isSubmitted) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _controller.isSubmitted) {
-            _nextButtonFocusNode.requestFocus();
-          }
-        });
-      }
       setState(() {});
     }
   }
-
-
 
   @override
   void dispose() {
@@ -145,14 +131,15 @@ class _QuizScreenState extends State<QuizScreen> {
   }
 
   /// Explicitly submit answer (from input field or submit button)
-  void _submitAnswer() {
+  Future<void> _submitAnswer() async {
     if (_controller.isSubmitted || _controller.isEvaluating) return;
     _ignoreEnterUntilKeyUp = true;
     _focusNode.unfocus();
-    _controller.submitAnswer(_textController.text);
+    await _controller.submitAnswer(_textController.text);
+    if (mounted && (ModalRoute.of(context)?.isCurrent ?? true) && _controller.isSubmitted) {
+      _nextButtonFocusNode.requestFocus();
+    }
   }
-
-
 
   /// Explicitly advance to next word (from next button or enter key when answer is displayed)
   void _goToNextWord() {
@@ -162,7 +149,7 @@ class _QuizScreenState extends State<QuizScreen> {
     _textController.clear();
     _controller.nextWord();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_controller.isSubmitted) {
+      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true) && !_controller.isSubmitted) {
         _focusNode.requestFocus();
       }
     });

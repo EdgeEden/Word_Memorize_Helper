@@ -924,14 +924,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       color: Colors.transparent,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: colorScheme.primaryContainer.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(Icons.library_add_rounded, size: 20, color: colorScheme.primary),
-                        ),
                         title: const Text('自定义词库管理与导入', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                         subtitle: Text(
                           '导入自定义 CSV 词库文件，支持多端增量同步',
@@ -955,14 +947,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       color: Colors.transparent,
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: colorScheme.errorContainer.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(Icons.delete_sweep_rounded, size: 20, color: colorScheme.error),
-                        ),
                         title: const Text('清除错题本与复习数据', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                         subtitle: Text(
                           '重置当前词库或所有词库的 FSRS 记忆曲线与错题记录（同步删除云端）',
@@ -1009,7 +993,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _checkUpdateSuccess = null;
     });
 
-    final res = await widget.controller.checkForUpdates();
+    final res = await widget.controller.checkForUpdates(isSilent: true);
 
     if (!mounted) return;
     setState(() {

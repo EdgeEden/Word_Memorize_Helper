@@ -174,9 +174,6 @@ class AudioService {
     if (onStateChanged != null) onStateChanged();
 
     try {
-      final player = _ensurePlayer(onStateChanged);
-      await player.stop();
-
       String? audioUrl;
       if (sourceType == AudioSourceType.freeDictionary) {
         // Attempt Free Dictionary API first
@@ -188,9 +185,6 @@ class AudioService {
         audioUrl = getYoudaoAudioUrl(cleanWord);
       }
 
-      final mimeType = inferMimeType(audioUrl);
-      await player.play(UrlSource(audioUrl, mimeType: mimeType));
-      return true;
       if (kIsWeb) {
         final success = await WebAudioPlayer.play(
           audioUrl,
@@ -231,7 +225,6 @@ class AudioService {
   /// Stop current playback immediately
   static Future<void> stop({VoidCallback? onStateChanged}) async {
     try {
-      await _player?.stop();
       if (kIsWeb) {
         WebAudioPlayer.stop();
       } else {

@@ -18,9 +18,9 @@ DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
 
 # Current published latest version info
 LATEST_VERSION_CONFIG = {
-    "version": "1.0.4",
-    "version_code": 5,
-    "release_notes": "1. 📚 支持导入自定义词库：多端适配 CSV 词库上传与解析，独立隔离错题本与多端云同步\n2. ⚡ 安卓后台下载与通知栏增强：基于系统原生 DownloadManager，切出应用/锁屏持续稳定下载，通知栏与应用内进度实时同步\n3. 🛡️ 强制更新防护与顶部下载指示：顶部 AppBar 实时显示下载进度与状态，强化重要版本更新防护\n4. 🎨 界面与体验优化：重构偏好设置与 AI 判定面板，彻底消除 Web 渲染与排版异常",
+    "version": "1.0.5",
+    "version_code": 6,
+    "release_notes": "1. 🔊 新增单词读音与发音设置：支持有道词典与 Free Dictionary 双音源，提供自动朗读模式配置与音标旁一键发音\n2. 🌐 Web 端跨域发音驱动优化：独立实现原生 HTML5 Audio 播放，彻底解决 WebAudio CORS 限制\n3. 🎯 弹窗焦点管理与防误拉键盘：彻底解决检查更新与弹窗交互时焦点被主界面抢占的问题\n4. 📱 偏好设置高级选项 UI 布局优化：针对移动端屏幕释放横向空间，排版更舒适",
     "apk_url": "/api/download/apk",
     "windows_url": "/api/download/windows",
 }

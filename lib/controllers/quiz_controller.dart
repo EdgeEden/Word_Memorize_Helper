@@ -308,7 +308,7 @@ class QuizController extends ChangeNotifier {
       return result;
     } finally {
       _isCheckingUpdate = false;
-      notifyListeners();
+      if (!isSilent) notifyListeners();
     }
   }
 
